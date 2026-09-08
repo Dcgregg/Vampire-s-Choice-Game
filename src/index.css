@@ -1,0 +1,67 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-display: 'Cinzel', serif;
+    --font-narrative: 'Cormorant Garamond', Georgia, serif;
+    --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: #09070c;
+    color: #ede5d8;
+  }
+}
+
+.font-display {
+  font-family: var(--font-display);
+}
+
+.font-narrative {
+  font-family: var(--font-narrative);
+}
+
+.font-interface {
+  font-family: var(--font-sans);
+}
+
+/* Atmospheric scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #09070c;
+}
+::-webkit-scrollbar-thumb {
+  background: #251b30;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3e2648;
+}
+
+/* Subtle Candlelight & Crimson Glow FX */
+@keyframes flame-flicker {
+  0%, 100% { opacity: 0.85; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(0.98); }
+  75% { opacity: 0.95; transform: scale(1.02); }
+}
+
+.animate-candle {
+  animation: flame-flicker 4s ease-in-out infinite;
+}
+
+/* Atmospheric gothic parchment texture / vignette overlay */
+.vignette-radial {
+  background: radial-gradient(ellipse at center, transparent 40%, rgba(5, 3, 7, 0.85) 100%);
+}
+
+.crimson-glow {
+  box-shadow: 0 0 35px -5px rgba(190, 18, 60, 0.25);
+}
+
+.gold-glow {
+  box-shadow: 0 0 25px -5px rgba(197, 160, 89, 0.2);
+}
