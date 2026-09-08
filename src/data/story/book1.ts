@@ -707,7 +707,8 @@ export const SCENES: { [sceneId: string]: Scene } = {
       {
         id: 'c3_3_conclude_book1',
         text: 'Reflect upon your journey and prepare for Book II: The Crimson Throne.',
-        nextSceneId: 'b1_c1_s1', // Loop or celebration screen trigger
+        nextSceneId: 'b1_c3_s3',
+        returnToLanding: true,
         consequencesSummary: 'Complete Book 1 with all choices, flags, and relationships recorded.',
         effects: {
           coinsChange: 100,

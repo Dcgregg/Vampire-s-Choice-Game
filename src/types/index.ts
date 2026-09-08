@@ -52,9 +52,34 @@ export interface ChoiceEffect {
   notificationText?: string;
 }
 
+export interface RelationshipThreshold {
+  characterId: string;
+  min?: number;
+  max?: number;
+}
+
+/**
+ * Declarative conditions attached to a choice (or, in future, content).
+ * All present fields must be satisfied simultaneously (logical AND).
+ * An undefined/empty condition is always available.
+ */
 export interface ChoiceCondition {
+  // Flags: every listed flag must strictly equal the expected value.
   requiredFlags?: { [flagKey: string]: boolean | string | number };
+  // Legacy single relationship threshold (preserved for backwards compatibility).
   minRelationship?: { characterId: string; minValue: number };
+  // Foundation: multiple relationship thresholds (min and/or max affinity).
+  relationships?: RelationshipThreshold[];
+  // Currency / numeric variable bounds.
+  minCoins?: number;
+  maxCoins?: number;
+  // Story progress.
+  requiredBook?: string;
+  requiredChapter?: number; // player's currentChapter must be >= this
+  visitedScene?: string; // sceneHistory must include this scene id
+  // Player identity / character properties (where already supported).
+  playerGender?: GenderIdentity | GenderIdentity[];
+  playerOrientation?: SexualOrientation | SexualOrientation[];
 }
 
 export interface SceneChoice {
@@ -66,6 +91,10 @@ export interface SceneChoice {
   condition?: ChoiceCondition;
   isRomantic?: boolean;
   isDangerous?: boolean;
+  // When true, selecting this choice ends the current flow and returns the
+  // player to the landing screen instead of navigating to another scene.
+  // Used for book-ending choices so the story does not silently loop.
+  returnToLanding?: boolean;
 }
 
 export interface Scene {

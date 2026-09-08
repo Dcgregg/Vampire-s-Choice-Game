@@ -1,8 +1,35 @@
-import { PlayerState } from '../types';
+import { PlayerState, Character } from '../types';
 import { INITIAL_CHARACTERS } from '../data/characters';
 import { INITIAL_ACHIEVEMENTS } from '../data/achievements';
 
 const STORAGE_KEY = 'vampires_choice_player_state_v1';
+const CURRENT_VERSION = 2;
+
+/**
+ * Merge saved character data with the current INITIAL_CHARACTERS base.
+ * Static authored fields (name, title, description, avatar, romanceEligible)
+ * always come from the current base so content updates reach existing players.
+ * Dynamic per-player fields (affinity, status, loreUnlocked) are preserved
+ * from the save when present. This closes the character/save migration gap.
+ */
+function mergeCharacters(saved: unknown): { [id: string]: Character } {
+  const out: { [id: string]: Character } = {};
+  const savedMap = (saved && typeof saved === 'object' ? saved : {}) as {
+    [id: string]: Partial<Character>;
+  };
+  for (const [id, base] of Object.entries(INITIAL_CHARACTERS)) {
+    const s = savedMap[id];
+    out[id] = s
+      ? {
+          ...base,
+          affinity: typeof s.affinity === 'number' ? s.affinity : base.affinity,
+          status: s.status ?? base.status,
+          loreUnlocked: Array.isArray(s.loreUnlocked) ? s.loreUnlocked : base.loreUnlocked,
+        }
+      : base;
+  }
+  return out;
+}
 
 export const DEFAULT_PLAYER_STATE: PlayerState = {
   player: null,
@@ -25,7 +52,7 @@ export const DEFAULT_PLAYER_STATE: PlayerState = {
     reducedMotion: false,
     highContrast: false,
   },
-  version: 1,
+  version: CURRENT_VERSION,
 };
 
 export function loadSavedState(): PlayerState {
@@ -43,10 +70,7 @@ export function loadSavedState(): PlayerState {
     return {
       ...DEFAULT_PLAYER_STATE,
       ...parsed,
-      relationships: {
-        ...INITIAL_CHARACTERS,
-        ...(parsed.relationships || {}),
-      },
+      relationships: mergeCharacters(parsed.relationships),
       achievements: {
         ...INITIAL_ACHIEVEMENTS,
         ...(parsed.achievements || {}),
@@ -60,6 +84,7 @@ export function loadSavedState(): PlayerState {
         ...(parsed.progress || {}),
       },
       flags: parsed.flags || {},
+      version: CURRENT_VERSION,
     };
   } catch (err) {
     console.error('Failed to parse saved state from localStorage:', err);

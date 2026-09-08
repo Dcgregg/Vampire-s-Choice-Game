@@ -16,18 +16,25 @@ Vite 6 + React 19 + TypeScript · Tailwind CSS v4 · vite-plugin-pwa · lucide-r
 - `src/components/screens/*`, `src/components/common/*`
 
 ## Status
-- 2026-06: Completed full read-only audit. App installed (yarn) and running live on port 3000 in preview. Full report at `/app/AUDIT_REPORT.md`. **No feature/logic code changed.** Only preview-enabling change: `allowedHosts: true` + host/port in `vite.config.ts` dev server block.
+- 2026-06 (Audit): Completed read-only audit. App runs on port 3000 (Vite dev). Report at `/app/AUDIT_REPORT.md`. Baseline commit: **18e89e9**.
+- 2026-06 (Phase 2 — DONE, verified): Extracted a pure, tested Story Engine (`src/engine/*`); `GameStateManager` now delegates to it. Enabled `choice.condition` evaluation (locked choices). Fixed: daily-streak logic, `completedChapters` population, Book-1 ending loop (now returns to Landing), centralized effects, character/save migration, content validation. Removed dead deps (`@google/genai`, `motion`, `express`, `dotenv`, `@types/express`). Added Vitest: **42/42 unit tests pass**. Frontend E2E via testing_agent: **100% pass** (all P1/P2/P3). Typecheck + prod build clean.
 
-## Confirmed findings (verified by grep)
-- Dead deps (imported nowhere): `@google/genai`, `motion`, `express`, `dotenv`.
-- `ChoiceCondition` (requiredFlags/minRelationship) defined but never evaluated → no conditional choices.
-- `dailyStreak` never incremented (hardcoded 3); `effects.streakIncrement` never handled.
-- `completedChapters` never populated.
-- Book-1 ending choice loops `nextSceneId` back to `b1_c1_s1`.
-- CRITICAL security: GitHub token embedded in git `origin` remote URL — must be revoked/rotated.
-- No frontend key leak in `src/` today (no process.env/GEMINI usage).
+## Story Engine (Phase 2)
+- `src/engine/conditions.ts` — `evaluateCondition` (flags, relationship min/max, currency, story progress, player identity; AND-combined; missing data fails safe), `isChoiceAvailable`, `isParagraphVisible`.
+- `src/engine/effects.ts` — `applyEffects` (pure, immutable; relationships+status, flags, coins clamp≥0, streakIncrement, achievements incl. derived Dangerous Liaison, consequence events), `unlockAchievement`, `computeDailyStreak`, `updateRelationshipStatus`.
+- `src/engine/navigation.ts` — `navigate` (next scene, sceneHistory, currentChapter, completedChapters, returnToLanding, dangling-scene report).
+- `src/engine/engine.ts` — `selectChoice` orchestrator: validate → effects → navigate → new state + events.
+- `src/engine/validate.ts` — `validateContent` (dangling nextSceneId, unknown achievement/character refs).
+- Host translates engine events → audio/banner/toast in `gameState.ts` (`handleEvents`). Engine imports no React/audio/storage.
 
-## Recommended phases (proposed, awaiting approval)
+## Remaining debt (post Phase 2, non-blocking)
+- Continue after book completion resumes on the finale scene (acceptable placeholder until a proper Book-Complete screen / Book 2 exists).
+- Achievement banner is a fixed overlay; on mobile it can overlap tappable areas (pre-existing). Consider `pointer-events` guard / auto-dismiss.
+- `book1.ts` ~720 lines; split per-chapter when content grows.
+- `dev-dist/` PWA artifacts are tracked (noise); consider gitignoring.
+- Duplicated reward metadata: `Chapter.rewardCoins`/`completionAchievementId` are now descriptive only (choice effects are authoritative).
+
+## Recommended phases (2 done; awaiting approval for 3)
 1. Stabilize + fix small bugs (streak, book-end loop, completedChapters), drop dead deps.
 2. **FIRST BUILD:** extract pure, tested Story Engine + enforce `choice.condition`; add zod content validation.
 3. Externalize content to validated JSON + versioning (still bundled).

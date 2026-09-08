@@ -5,11 +5,23 @@ import {
   SexualOrientation,
   SceneChoice,
   GameSettings,
-  Achievement,
 } from '../types';
 import { loadSavedState, savePlayerState, DEFAULT_PLAYER_STATE, clearPlayerState } from '../utils/storage';
-import { getSceneById } from '../data/story';
+import { getSceneById, ALL_SCENES, BOOKS } from '../data/story';
+import { INITIAL_CHARACTERS } from '../data/characters';
+import { INITIAL_ACHIEVEMENTS } from '../data/achievements';
 import { gothicAudio } from '../utils/audio';
+import {
+  selectChoice,
+  unlockAchievement as engineUnlockAchievement,
+  computeDailyStreak,
+  updateRelationshipStatus,
+  validateContent,
+  EngineEvent,
+} from '../engine';
+
+// Re-exported for backwards compatibility with existing imports.
+export { updateRelationshipStatus };
 
 export type ScreenType =
   | 'landing'
@@ -28,25 +40,29 @@ export interface ConsequenceEvent {
   timestamp: number;
 }
 
-export function updateRelationshipStatus(affinity: number): 'Unknown' | 'Acquaintance' | 'Intrigued' | 'Trusted' | 'Devoted' | 'Rival' {
-  if (affinity <= 25) return 'Rival';
-  if (affinity < 50) return 'Acquaintance';
-  if (affinity < 65) return 'Intrigued';
-  if (affinity < 85) return 'Trusted';
-  return 'Devoted';
-}
-
 export class GameStateManager {
   private state: PlayerState;
   private listeners: Set<() => void> = new Set();
   public activeScreen: ScreenType = 'landing';
   public latestConsequence: ConsequenceEvent | null = null;
-  public newlyUnlockedAchievement: Achievement | null = null;
+  public newlyUnlockedAchievement: PlayerState['achievements'][string] | null = null;
 
   constructor() {
     this.state = loadSavedState();
-    // If player already created and was in reading progress, land screen can offer continue
     this.checkDailyStreak();
+
+    // Surface content integrity problems early during development.
+    if (import.meta.env?.DEV) {
+      const issues = validateContent({
+        scenes: ALL_SCENES,
+        books: BOOKS,
+        achievements: INITIAL_ACHIEVEMENTS,
+        characters: INITIAL_CHARACTERS,
+      });
+      if (issues.length) {
+        console.warn('[Vampire\u2019s Choice] content validation issues:', issues);
+      }
+    }
   }
 
   public getState(): PlayerState {
@@ -63,11 +79,31 @@ export class GameStateManager {
     this.listeners.forEach((l) => l());
   }
 
+  /** Translate pure engine events into UI side-effects (audio, banner, toast). */
+  private handleEvents(events: EngineEvent[]) {
+    for (const ev of events) {
+      if (ev.type === 'achievementUnlocked') {
+        this.newlyUnlockedAchievement = ev.achievement;
+        gothicAudio.playAchievementChime();
+      } else if (ev.type === 'consequence') {
+        this.latestConsequence = {
+          id: String(Date.now()),
+          message: ev.message,
+          type: 'relationship',
+          timestamp: Date.now(),
+        };
+      }
+    }
+  }
+
   private checkDailyStreak() {
-    const today = new Date().toISOString().split('T')[0];
-    if (this.state.lastLoginDate !== today) {
-      // In prototype: update last login and simulate streak increment
-      this.state.lastLoginDate = today;
+    const result = computeDailyStreak(this.state);
+    if (result.changed) {
+      this.state = {
+        ...this.state,
+        dailyStreak: result.dailyStreak,
+        lastLoginDate: result.lastLoginDate,
+      };
       savePlayerState(this.state);
     }
   }
@@ -90,16 +126,18 @@ export class GameStateManager {
       createdAt: Date.now(),
     };
 
-    this.state.player = profile;
-    this.state.progress = {
-      currentBookId: 'book1',
-      currentChapter: 1,
-      currentSceneId: 'b1_c1_s1',
-      completedChapters: [],
-      sceneHistory: ['b1_c1_s1'],
+    this.state = {
+      ...this.state,
+      player: profile,
+      progress: {
+        currentBookId: 'book1',
+        currentChapter: 1,
+        currentSceneId: 'b1_c1_s1',
+        completedChapters: [],
+        sceneHistory: ['b1_c1_s1'],
+      },
     };
 
-    // Unlock THE_STORY_BEGINS achievement
     this.unlockAchievement('THE_STORY_BEGINS');
 
     this.activeScreen = 'reading';
@@ -109,19 +147,17 @@ export class GameStateManager {
   public continueStory() {
     if (this.state.player && this.state.progress.currentSceneId) {
       this.activeScreen = 'reading';
-      this.notify();
     } else {
       this.activeScreen = 'character_creation';
-      this.notify();
     }
+    this.notify();
   }
 
   public unlockAchievement(achievementId: string) {
-    const ach = this.state.achievements[achievementId];
-    if (ach && !ach.unlockedAt) {
-      ach.unlockedAt = Date.now();
-      this.state.achievements[achievementId] = { ...ach };
-      this.newlyUnlockedAchievement = ach;
+    const { state, event } = engineUnlockAchievement(this.state, achievementId);
+    if (event) {
+      this.state = state;
+      this.newlyUnlockedAchievement = event.achievement;
       gothicAudio.playAchievementChime();
       this.notify();
     }
@@ -138,72 +174,17 @@ export class GameStateManager {
   }
 
   public makeChoice(choice: SceneChoice) {
+    const result = selectChoice(this.state, choice, getSceneById);
+
+    // A choice whose conditions are not satisfied is not executable.
+    if (!result.ok) return;
+
     gothicAudio.playChoiceChime();
+    this.state = result.state;
+    this.handleEvents(result.events);
 
-    // 1. Process effects
-    if (choice.effects) {
-      const {
-        relationshipChanges,
-        setFlags,
-        coinsChange,
-        achievementId,
-        notificationText,
-      } = choice.effects;
-
-      // Relationships
-      if (relationshipChanges) {
-        Object.entries(relationshipChanges).forEach(([charId, delta]) => {
-          const char = this.state.relationships[charId];
-          if (char) {
-            const newAffinity = Math.max(0, Math.min(100, char.affinity + delta));
-            char.affinity = newAffinity;
-            char.status = updateRelationshipStatus(newAffinity);
-
-            // Check Dangerous Liaison achievement if affinity >= 70
-            if (newAffinity >= 70) {
-              this.unlockAchievement('DANGEROUS_LIAISON');
-            }
-          }
-        });
-      }
-
-      // Flags
-      if (setFlags) {
-        this.state.flags = {
-          ...this.state.flags,
-          ...setFlags,
-        };
-      }
-
-      // Currency
-      if (coinsChange) {
-        this.state.bloodCoins = Math.max(0, this.state.bloodCoins + coinsChange);
-      }
-
-      // Achievement
-      if (achievementId) {
-        this.unlockAchievement(achievementId);
-      }
-
-      // Notification
-      if (notificationText) {
-        this.latestConsequence = {
-          id: String(Date.now()),
-          message: notificationText,
-          type: 'relationship',
-          timestamp: Date.now(),
-        };
-      }
-    }
-
-    // 2. Advance to next scene
-    const targetScene = getSceneById(choice.nextSceneId);
-    if (targetScene) {
-      this.state.progress.currentSceneId = targetScene.id;
-      this.state.progress.currentChapter = targetScene.chapterNumber;
-      if (!this.state.progress.sceneHistory.includes(targetScene.id)) {
-        this.state.progress.sceneHistory.push(targetScene.id);
-      }
+    if (result.returnToLanding) {
+      this.activeScreen = 'landing';
     }
 
     this.notify();
@@ -212,16 +193,22 @@ export class GameStateManager {
   public jumpToScene(sceneId: string) {
     const scene = getSceneById(sceneId);
     if (scene) {
-      this.state.progress.currentSceneId = scene.id;
-      this.state.progress.currentChapter = scene.chapterNumber;
+      this.state = {
+        ...this.state,
+        progress: {
+          ...this.state.progress,
+          currentSceneId: scene.id,
+          currentChapter: scene.chapterNumber,
+        },
+      };
       this.notify();
     }
   }
 
   public updateSettings(newSettings: Partial<GameSettings>) {
-    this.state.settings = {
-      ...this.state.settings,
-      ...newSettings,
+    this.state = {
+      ...this.state,
+      settings: { ...this.state.settings, ...newSettings },
     };
     if (newSettings.ambientAudio !== undefined) {
       if (newSettings.ambientAudio) {

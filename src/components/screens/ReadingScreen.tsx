@@ -1,8 +1,9 @@
 import React, { useRef, useEffect } from 'react';
 import { useGameState } from '../../state/useGameState';
 import { getSceneById } from '../../data/story';
+import { isChoiceAvailable, isParagraphVisible } from '../../engine';
 import { SceneChoice } from '../../types';
-import { Heart, AlertTriangle, Sparkles, ChevronRight, Bookmark, Type } from 'lucide-react';
+import { Heart, AlertTriangle, Sparkles, ChevronRight, Bookmark, Type, Lock } from 'lucide-react';
 
 export const ReadingScreen: React.FC = () => {
   const { state, makeChoice, interpolate, updateSettings } = useGameState();
@@ -132,13 +133,7 @@ export const ReadingScreen: React.FC = () => {
 
         {/* Dynamic Condition Paragraphs (reacting to prior choices) */}
         {scene.conditionParagraphs?.map((cond, idx) => {
-          const flagValue = state.flags[cond.conditionFlag];
-          const matches =
-            cond.expectedValue !== undefined
-              ? flagValue === cond.expectedValue
-              : Boolean(flagValue);
-
-          if (!matches) return null;
+          if (!isParagraphVisible(cond, state)) return null;
 
           return (
             <div
@@ -216,31 +211,52 @@ export const ReadingScreen: React.FC = () => {
             {scene.choices.map((choice: SceneChoice) => {
               const isRomantic = choice.isRomantic;
               const isDangerous = choice.isDangerous;
+              const available = isChoiceAvailable(choice, state);
 
               return (
                 <button
                   key={choice.id}
                   id={`choice-${choice.id}`}
-                  onClick={() => makeChoice(choice)}
-                  className={`group relative w-full rounded-xl border p-4 text-left transition-all duration-300 hover:scale-[1.01] active:scale-[0.99] ${
-                    isRomantic
+                  data-testid={`choice-${choice.id}`}
+                  disabled={!available}
+                  aria-disabled={!available}
+                  onClick={() => {
+                    if (available) makeChoice(choice);
+                  }}
+                  className={`group relative w-full rounded-xl border p-4 text-left transition-all duration-300 ${
+                    !available
+                      ? 'cursor-not-allowed border-white/10 bg-black/40 opacity-50'
+                      : 'hover:scale-[1.01] active:scale-[0.99] '
+                  }${
+                    available && isRomantic
                       ? 'border-rose-800/60 bg-gradient-to-r from-[#200e1f] to-[#140816] hover:border-rose-600 shadow-[0_2px_12px_rgba(190,18,60,0.15)]'
-                      : isDangerous
+                      : available && isDangerous
                       ? 'border-amber-700/60 bg-gradient-to-r from-[#22130e] to-[#140a08] hover:border-amber-500 shadow-[0_2px_12px_rgba(180,83,9,0.15)]'
-                      : 'border-[#332244]/80 bg-gradient-to-r from-[#170e22] to-[#100918] hover:border-[#c5a059]/60 hover:bg-[#1f132e]'
+                      : available
+                      ? 'border-[#332244]/80 bg-gradient-to-r from-[#170e22] to-[#100918] hover:border-[#c5a059]/60 hover:bg-[#1f132e]'
+                      : ''
                   }`}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex-1">
                       {/* Emotional Badges */}
                       <div className="flex items-center gap-2 mb-1.5">
-                        {isRomantic && (
+                        {!available && (
+                          <span
+                            data-testid={`choice-locked-${choice.id}`}
+                            className="inline-flex items-center gap-1 rounded-full bg-black/60 border border-white/15 px-2 py-0.5 text-[10px] font-semibold text-stone-300"
+                          >
+                            <Lock className="w-2.5 h-2.5 text-stone-400" />
+                            <span>Locked</span>
+                          </span>
+                        )}
+                        {available && isRomantic && (
                           <span className="inline-flex items-center gap-1 rounded-full bg-rose-950/80 border border-rose-800/60 px-2 py-0.5 text-[10px] font-semibold text-rose-200">
                             <Heart className="w-2.5 h-2.5 fill-rose-500 text-rose-500" />
                             <span>Romantic Arc</span>
                           </span>
                         )}
-                        {isDangerous && (
+                        {available && isDangerous && (
                           <span className="inline-flex items-center gap-1 rounded-full bg-amber-950/80 border border-amber-800/60 px-2 py-0.5 text-[10px] font-semibold text-amber-200">
                             <AlertTriangle className="w-2.5 h-2.5 text-amber-400" />
                             <span>High Stakes</span>
