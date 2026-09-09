@@ -6,7 +6,7 @@ import {
   SceneChoice,
   GameSettings,
 } from '../types';
-import { loadSavedState, savePlayerState, DEFAULT_PLAYER_STATE, clearPlayerState } from '../utils/storage';
+import { loadSavedState, savePlayerState, DEFAULT_PLAYER_STATE, clearPlayerState, migrateAndMerge } from '../utils/storage';
 import { getSceneById, ALL_SCENES, BOOKS, BOOK_VERSIONS } from '../data/story';
 import { INITIAL_CHARACTERS } from '../data/characters';
 import { INITIAL_ACHIEVEMENTS } from '../data/achievements';
@@ -20,6 +20,7 @@ import {
   isCurrentBookCompleted,
   EngineEvent,
 } from '../engine';
+import { syncManager } from '../sync/syncManager';
 
 // Re-exported for backwards compatibility with existing imports.
 export { updateRelationshipStatus };
@@ -65,6 +66,17 @@ export class GameStateManager {
         console.warn('[Vampire\u2019s Choice] content validation issues:', issues);
       }
     }
+
+    // Local-first cloud sync sits ABOVE local persistence and never blocks play.
+    syncManager.attach({
+      getState: () => this.state,
+      applyCloudState: (state) => {
+        this.state = state;
+        this.notify();
+      },
+      migrate: (raw) => migrateAndMerge(raw),
+    });
+    void syncManager.start();
   }
 
   public getState(): PlayerState {
@@ -79,6 +91,7 @@ export class GameStateManager {
   private notify() {
     savePlayerState(this.state);
     this.listeners.forEach((l) => l());
+    syncManager.recordLocalSave();
   }
 
   /** Translate pure engine events into UI side-effects (audio, banner, toast). */

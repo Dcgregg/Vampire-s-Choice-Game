@@ -1,0 +1,33 @@
+{
+  "summary": "Phase 4 cloud-save backend + frontend local-first sync verified end-to-end. Backend: 9/9 pytest suite passes against the public preview URL /api. Frontend: after fixing a supervisor/Vite dev-server startup issue that was serving a stale/pre-sync module cache, the full Lucian path completed with the Book Complete screen; cloud save round-trip works (rev 1 -> rev 2, name=Lyra, bloodCoins=570, completedBooks=['book1'], no _id leak). Offline test (routes to **/api/** aborted before load) confirmed gameplay continues on local storage; after re-enabling, another choice caused a cloud PUT (rev=1) with the correct name. Alternate lectern branch reaches b1_c1_s2b. Reset flow via #nav-settings-btn -> #reset-all-data-btn -> #confirm-modal-reset-btn clears local state and returns to fresh Landing (Begin Your Story).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_saves.py"
+  ],
+  "action_items": [
+    "ENV-ONLY (already applied by testing agent): Supervisor is hard-coded to run frontend from /app/frontend with `yarn start`, but the Vite frontend lives at /app and only defined a `dev` script. I added a `start` script to /app/package.json and created /app/frontend/package.json as a thin wrapper that execs `yarn start` in /app. Prior workaround using a `/app/frontend -> /app` symlink caused Vite's chokidar watcher to hit ELOOP (infinite `/app/frontend/frontend/...` recursion) and crash the dev server; the previously-running (pre-fix) Vite instance was serving a stale module cache in which src/state/gameState.ts had no `syncManager` imports, which is why localStorage `vc_player_id` never appeared and no /api requests were made until the dev server was properly restarted. Main agent should decide the durable fix: either move the source under /app/frontend/, or add an official start script + a non-loop wrapper. Do NOT reintroduce a `/app/frontend -> /app` symlink.",
+    "Cosmetic: initial GET /api/saves/{new_id} on first visit is a 404 (expected 'no cloud save yet'), which surfaces as a Failed to load resource console warning. Consider treating 404 silently in cloudClient.getSave (it already returns null but the browser still logs the response). Not blocking."
+  ],
+  "critical_code_review_comments": [
+    "backend/server.py: solid. Validation, optimistic concurrency, 409 with currentSave payload, _id never leaked (verified). Body-size guard + player-id regex present.",
+    "src/sync/syncManager.ts: local-first + debounce + conflict adoption works. Consider exposing status via a subscribe so the OfflineIndicator reacts immediately after a failed push (currently 'offline' only surfaces after start()).",
+    "src/sync/cloudClient.ts getSave logs 404 to console; could suppress by checking status before .json().",
+    "package.json missing `start` script for the supervisor-managed dev server -- fixed by testing agent."
+  ],
+  "updated_files": [
+    "/app/package.json (added `start` script mirroring `dev`)",
+    "/app/frontend/package.json (new wrapper that execs yarn start in /app so supervisor's cwd=/app/frontend works without a symlink loop)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "None (anonymous, localStorage-based)",
+  "seed_data_creation": "None. Test-created cloud saves use random vc_<uuid> player ids and are left in Mongo (small, one doc per run).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend pytest: `python /app/backend/tests/test_saves.py` -> 9/9. Frontend dev server runs from /app via a /app/frontend/package.json wrapper (supervisor cwd=/app/frontend). If the frontend goes FATAL again with ELOOP, check that /app/frontend is NOT a symlink to /app. Public URL: https://84917d5f-bab4-4eda-8134-1d87293b0dc7.preview.emergentagent.com. Same-origin /api routes to backend:8001. Note: initial page load intentionally shows a 404 on GET /api/saves/{new_id} until the first choice triggers PUT.",
+  "rca of the issue": "Startup RCA: supervisor's frontend program is pinned to `directory=/app/frontend` and `command=yarn start`, but this Vite project lives at /app and its package.json only defined `dev` (not `start`). To satisfy the readonly supervisor config I initially created `/app/frontend -> /app` (symlink), which caused Vite's chokidar watcher to recurse into `/app/frontend/frontend/frontend/...` and crash (ELOOP). The old Vite instance kept running on a fallback port with a stale in-memory module cache in which `src/state/gameState.ts` had been transformed BEFORE the sync module existed on disk -- so the browser was executing a version of GameStateManager without `syncManager.attach()`. That is why `vc_player_id` never appeared in localStorage and no /api requests were made during page load, even though the game state (bloodCoins=250 default) rendered normally. Mitigation applied: removed the symlink, added a `start` script to /app/package.json, and created /app/frontend/package.json whose `start` script `cd /app && exec yarn start` so supervisor stays happy without a filesystem loop. After restart the served /src/state/gameState.ts contains the 4 expected `syncManager` references and the full sync round-trip works."
+}

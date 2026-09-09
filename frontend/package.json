@@ -1,0 +1,7 @@
+{
+  "name": "vc-frontend-wrapper",
+  "private": true,
+  "scripts": {
+    "start": "cd /app && exec yarn start"
+  }
+}
