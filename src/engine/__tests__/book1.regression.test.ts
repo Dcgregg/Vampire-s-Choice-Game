@@ -17,7 +17,7 @@ describe('Book 1 — full playthrough regression (Lucian romance path)', () => {
     let state: PlayerState = baseState({
       progress: {
         currentBookId: 'book1', currentChapter: 1, currentSceneId: 'b1_c1_s1',
-        completedChapters: [], sceneHistory: ['b1_c1_s1'],
+        completedChapters: [], completedBooks: [], sceneHistory: ['b1_c1_s1'],
       },
       bloodCoins: 250,
       dailyStreak: 3,
@@ -69,10 +69,11 @@ describe('Book 1 — full playthrough regression (Lucian romance path)', () => {
     expect(state.flags.completedChapter1).toBe(true);
     expect(state.flags.chosenPartner).toBe('lucian');
 
-    // Final choice ends the book by returning to landing (no loop back to scene 1).
+    // Final choice completes the book explicitly (no loop back to scene 1).
     const finale = selectChoice(state, choiceOf('b1_c3_s3', 'c3_3_conclude_book1'), getSceneById);
     expect(finale.ok).toBe(true);
-    expect(finale.returnToLanding).toBe(true);
+    expect(finale.bookCompleted).toBe('book1');
+    expect(finale.state.progress.completedBooks).toContain('book1');
     expect(finale.state.bloodCoins).toBe(570);
     expect(finale.state.flags.completedBook1).toBe(true);
     // Progress is NOT reset to b1_c1_s1.

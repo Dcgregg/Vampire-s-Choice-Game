@@ -9,6 +9,7 @@ import { OfflineIndicator } from './components/common/OfflineIndicator';
 import { LandingScreen } from './components/screens/LandingScreen';
 import { CharacterCreationScreen } from './components/screens/CharacterCreationScreen';
 import { ReadingScreen } from './components/screens/ReadingScreen';
+import { BookCompleteScreen } from './components/screens/BookCompleteScreen';
 import { CharacterScreen } from './components/screens/CharacterScreen';
 import { RelationshipsScreen } from './components/screens/RelationshipsScreen';
 import { AchievementsScreen } from './components/screens/AchievementsScreen';
@@ -29,6 +30,7 @@ const MainContent: React.FC = () => {
         {activeScreen === 'landing' && <LandingScreen />}
         {activeScreen === 'character_creation' && <CharacterCreationScreen />}
         {activeScreen === 'reading' && <ReadingScreen />}
+        {activeScreen === 'book_complete' && <BookCompleteScreen />}
         {activeScreen === 'character' && <CharacterScreen />}
         {activeScreen === 'relationships' && <RelationshipsScreen />}
         {activeScreen === 'achievements' && <AchievementsScreen />}

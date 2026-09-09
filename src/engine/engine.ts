@@ -13,7 +13,6 @@
  * state is returned untouched with ok === false.
  */
 import { PlayerState, SceneChoice } from '../types';
-import { getSceneById } from '../data/story';
 import { evaluateCondition } from './conditions';
 import { applyEffects } from './effects';
 import { navigate } from './navigation';
@@ -22,12 +21,12 @@ import { SceneLookup, SelectChoiceResult } from './types';
 export function selectChoice(
   state: PlayerState,
   choice: SceneChoice,
-  getScene: SceneLookup = getSceneById
+  getScene: SceneLookup
 ): SelectChoiceResult {
   // 1. Validate conditions — locked choices cannot be executed.
   const condition = evaluateCondition(choice.condition, state);
   if (!condition.available) {
-    return { ok: false, reason: 'conditions_not_met', state, events: [], returnToLanding: false };
+    return { ok: false, reason: 'conditions_not_met', state, events: [] };
   }
 
   // 2. Apply effects to a copy of the state.
@@ -42,7 +41,7 @@ export function selectChoice(
     ok: true,
     state: nextState,
     events: [...effectEvents, ...nav.events],
-    returnToLanding: nav.returnToLanding,
+    bookCompleted: nav.bookCompleted,
     sceneNotFound: nav.sceneNotFound,
   };
 }

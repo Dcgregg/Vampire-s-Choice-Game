@@ -75,6 +75,7 @@ describe('conditions — currency / progress / identity', () => {
         currentChapter: 2,
         currentSceneId: 'b1_c2_s1',
         completedChapters: [1],
+        completedBooks: [],
         sceneHistory: ['b1_c1_s1', 'b1_c2_s1'],
       },
     });

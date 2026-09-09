@@ -1,16 +1,27 @@
-import { PlayerState, Character } from '../types';
+import { PlayerState, Character, PlayerProgress } from '../types';
 import { INITIAL_CHARACTERS } from '../data/characters';
 import { INITIAL_ACHIEVEMENTS } from '../data/achievements';
+import { BOOK_VERSIONS } from '../data/story';
 
 const STORAGE_KEY = 'vampires_choice_player_state_v1';
-const CURRENT_VERSION = 2;
+
+/**
+ * Player-SAVE schema version. This is intentionally SEPARATE from content
+ * versioning (CONTENT_SCHEMA_VERSION and per-book `version` in content/schema.ts).
+ *
+ *   v1 → initial prototype save.
+ *   v2 → character/save merge + settings/progress normalisation.
+ *   v3 → explicit book completion (progress.completedBooks) + contentVersions
+ *        (records which authored book version a save was created/played against,
+ *        enabling future content migrations to detect stale saves per book).
+ */
+const SAVE_SCHEMA_VERSION = 3;
 
 /**
  * Merge saved character data with the current INITIAL_CHARACTERS base.
- * Static authored fields (name, title, description, avatar, romanceEligible)
- * always come from the current base so content updates reach existing players.
- * Dynamic per-player fields (affinity, status, loreUnlocked) are preserved
- * from the save when present. This closes the character/save migration gap.
+ * Static authored fields always come from the current base so content updates
+ * reach existing players; dynamic per-player fields (affinity, status,
+ * loreUnlocked) are preserved from the save.
  */
 function mergeCharacters(saved: unknown): { [id: string]: Character } {
   const out: { [id: string]: Character } = {};
@@ -40,6 +51,7 @@ export const DEFAULT_PLAYER_STATE: PlayerState = {
     currentChapter: 1,
     currentSceneId: 'b1_c1_s1',
     completedChapters: [],
+    completedBooks: [],
     sceneHistory: ['b1_c1_s1'],
   },
   bloodCoins: 250,
@@ -52,40 +64,66 @@ export const DEFAULT_PLAYER_STATE: PlayerState = {
     reducedMotion: false,
     highContrast: false,
   },
-  version: CURRENT_VERSION,
+  version: SAVE_SCHEMA_VERSION,
+  contentVersions: { ...BOOK_VERSIONS },
 };
+
+/**
+ * Pure migration + defaults merge. Given a parsed (possibly older) save object,
+ * return a valid current-schema PlayerState. Safe for v1/v2/v3 inputs.
+ *
+ * v2 → v3 specifics:
+ *   - progress.completedBooks is introduced. Existing players who had reached
+ *     the Book 1 finale (flags.completedBook1 === true) are marked complete so
+ *     they are NOT dropped back into an "unfinished finale" after upgrading.
+ *   - contentVersions is stamped from the current bundle (pre-v3 saves cannot
+ *     know their original authored version, so we assume current).
+ */
+export function migrateAndMerge(parsed: Partial<PlayerState>): PlayerState {
+  const prevProgress = (parsed.progress || {}) as Partial<PlayerProgress>;
+  const flags = (parsed.flags as PlayerState['flags']) || {};
+
+  const completedBooks = Array.isArray(prevProgress.completedBooks)
+    ? prevProgress.completedBooks
+    : flags.completedBook1 === true
+    ? ['book1']
+    : [];
+
+  const progress: PlayerProgress = {
+    ...DEFAULT_PLAYER_STATE.progress,
+    ...prevProgress,
+    completedBooks,
+  };
+
+  return {
+    ...DEFAULT_PLAYER_STATE,
+    ...parsed,
+    relationships: mergeCharacters(parsed.relationships),
+    achievements: {
+      ...INITIAL_ACHIEVEMENTS,
+      ...(parsed.achievements || {}),
+    },
+    settings: {
+      ...DEFAULT_PLAYER_STATE.settings,
+      ...(parsed.settings || {}),
+    },
+    progress,
+    flags,
+    contentVersions: {
+      ...BOOK_VERSIONS,
+      ...(parsed.contentVersions || {}),
+    },
+    version: SAVE_SCHEMA_VERSION,
+  };
+}
 
 export function loadSavedState(): PlayerState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      return DEFAULT_PLAYER_STATE;
-    }
+    if (!raw) return DEFAULT_PLAYER_STATE;
     const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') {
-      return DEFAULT_PLAYER_STATE;
-    }
-
-    // Merge with defaults to ensure schema robustness if fields are missing
-    return {
-      ...DEFAULT_PLAYER_STATE,
-      ...parsed,
-      relationships: mergeCharacters(parsed.relationships),
-      achievements: {
-        ...INITIAL_ACHIEVEMENTS,
-        ...(parsed.achievements || {}),
-      },
-      settings: {
-        ...DEFAULT_PLAYER_STATE.settings,
-        ...(parsed.settings || {}),
-      },
-      progress: {
-        ...DEFAULT_PLAYER_STATE.progress,
-        ...(parsed.progress || {}),
-      },
-      flags: parsed.flags || {},
-      version: CURRENT_VERSION,
-    };
+    if (!parsed || typeof parsed !== 'object') return DEFAULT_PLAYER_STATE;
+    return migrateAndMerge(parsed);
   } catch (err) {
     console.error('Failed to parse saved state from localStorage:', err);
     return DEFAULT_PLAYER_STATE;

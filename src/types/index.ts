@@ -80,6 +80,8 @@ export interface ChoiceCondition {
   // Player identity / character properties (where already supported).
   playerGender?: GenderIdentity | GenderIdentity[];
   playerOrientation?: SexualOrientation | SexualOrientation[];
+  // Cross-book progression: the given book id must be in completedBooks.
+  completedBook?: string;
 }
 
 export interface SceneChoice {
@@ -91,10 +93,10 @@ export interface SceneChoice {
   condition?: ChoiceCondition;
   isRomantic?: boolean;
   isDangerous?: boolean;
-  // When true, selecting this choice ends the current flow and returns the
-  // player to the landing screen instead of navigating to another scene.
-  // Used for book-ending choices so the story does not silently loop.
-  returnToLanding?: boolean;
+  // When true, selecting this choice completes the current book. The engine
+  // records book completion in player state and signals the host to show the
+  // Book Complete screen (it does NOT navigate to another scene).
+  endsBook?: boolean;
 }
 
 export interface Scene {
@@ -146,6 +148,24 @@ export interface Book {
   synopsis: string;
   chapters: Chapter[];
   coverArtStyle: string;
+  // Content-layer metadata (populated by the loader from the content bundle).
+  version?: number;
+  seriesId?: string;
+  order?: number;
+  startingSceneId?: string;
+}
+
+export interface SeriesBookRef {
+  id: string;
+  order: number;
+  status: 'available' | 'coming_soon';
+}
+
+export interface Series {
+  id: string;
+  title: string;
+  description: string;
+  books: SeriesBookRef[];
 }
 
 export interface Achievement {
@@ -170,6 +190,7 @@ export interface PlayerProgress {
   currentChapter: number;
   currentSceneId: string;
   completedChapters: number[];
+  completedBooks: string[];
   sceneHistory: string[];
 }
 
@@ -183,5 +204,8 @@ export interface PlayerState {
   lastLoginDate: string;
   achievements: { [achievementId: string]: Achievement };
   settings: GameSettings;
+  /** Player-SAVE schema version (distinct from content schema/book versions). */
   version: number;
+  /** Which authored book content version this save was created/played against. */
+  contentVersions?: { [bookId: string]: number };
 }

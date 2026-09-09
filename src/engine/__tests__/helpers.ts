@@ -18,6 +18,7 @@ export function baseState(overrides: Partial<PlayerState> = {}): PlayerState {
       currentChapter: 1,
       currentSceneId: 'b1_c1_s1',
       completedChapters: [],
+      completedBooks: [],
       sceneHistory: ['b1_c1_s1'],
     },
     bloodCoins: 100,

@@ -1,0 +1,12 @@
+{
+  "contentSchemaVersion": 1,
+  "series": {
+    "id": "blackthorn",
+    "title": "Bloodlines of Blackthorn",
+    "description": "An episodic gothic-fantasy romance set within the mist-draped cloisters of Blackthorn Academy, where every allegiance is bought with blood.",
+    "books": [
+      { "id": "book1", "order": 1, "status": "available" },
+      { "id": "book2", "order": 2, "status": "coming_soon" }
+    ]
+  }
+}

@@ -20,8 +20,13 @@ const NAV_ITEMS: NavItem[] = [
 export const BottomNav: React.FC = () => {
   const { activeScreen, setScreen, state } = useGameState();
 
-  // Hide on landing screen or character creation for full cinematic immersion
-  if (activeScreen === 'landing' || activeScreen === 'character_creation') {
+  // Hide on landing, character creation, and the book-complete screen for
+  // full cinematic immersion.
+  if (
+    activeScreen === 'landing' ||
+    activeScreen === 'character_creation' ||
+    activeScreen === 'book_complete'
+  ) {
     return null;
   }
 

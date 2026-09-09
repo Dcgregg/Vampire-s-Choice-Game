@@ -56,21 +56,22 @@ describe('selectChoice — full flow', () => {
     expect(res.events.some((e) => e.type === 'consequence')).toBe(true);
   });
 
-  it('honours a returnToLanding choice', () => {
+  it('honours a book-ending (endsBook) choice', () => {
     const state = baseState({
       progress: {
         currentBookId: 'book1', currentChapter: 3, currentSceneId: 'b1_c3_s3',
-        completedChapters: [1, 2], sceneHistory: [],
+        completedChapters: [1, 2], completedBooks: [], sceneHistory: [],
       },
     });
     const choice: SceneChoice = {
-      id: 'end', text: 't', nextSceneId: 'b1_c3_s3', returnToLanding: true,
+      id: 'end', text: 't', nextSceneId: 'b1_c3_s3', endsBook: true,
       effects: { coinsChange: 100, setFlags: { completedBook1: true } },
     };
     const res = selectChoice(state, choice, getSceneById);
     expect(res.ok).toBe(true);
-    expect(res.returnToLanding).toBe(true);
+    expect(res.bookCompleted).toBe('book1');
     expect(res.state.flags.completedBook1).toBe(true);
+    expect(res.state.progress.completedBooks).toContain('book1');
     expect(res.state.progress.currentSceneId).toBe('b1_c3_s3'); // unchanged
   });
 });

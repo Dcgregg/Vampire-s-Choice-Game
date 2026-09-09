@@ -7,7 +7,7 @@ import {
   GameSettings,
 } from '../types';
 import { loadSavedState, savePlayerState, DEFAULT_PLAYER_STATE, clearPlayerState } from '../utils/storage';
-import { getSceneById, ALL_SCENES, BOOKS } from '../data/story';
+import { getSceneById, ALL_SCENES, BOOKS, BOOK_VERSIONS } from '../data/story';
 import { INITIAL_CHARACTERS } from '../data/characters';
 import { INITIAL_ACHIEVEMENTS } from '../data/achievements';
 import { gothicAudio } from '../utils/audio';
@@ -17,6 +17,7 @@ import {
   computeDailyStreak,
   updateRelationshipStatus,
   validateContent,
+  isCurrentBookCompleted,
   EngineEvent,
 } from '../engine';
 
@@ -27,6 +28,7 @@ export type ScreenType =
   | 'landing'
   | 'character_creation'
   | 'reading'
+  | 'book_complete'
   | 'character'
   | 'relationships'
   | 'achievements'
@@ -134,8 +136,10 @@ export class GameStateManager {
         currentChapter: 1,
         currentSceneId: 'b1_c1_s1',
         completedChapters: [],
+        completedBooks: [],
         sceneHistory: ['b1_c1_s1'],
       },
+      contentVersions: { ...BOOK_VERSIONS },
     };
 
     this.unlockAchievement('THE_STORY_BEGINS');
@@ -146,7 +150,8 @@ export class GameStateManager {
 
   public continueStory() {
     if (this.state.player && this.state.progress.currentSceneId) {
-      this.activeScreen = 'reading';
+      // A finished book must not reopen its finale as though unfinished.
+      this.activeScreen = isCurrentBookCompleted(this.state) ? 'book_complete' : 'reading';
     } else {
       this.activeScreen = 'character_creation';
     }
@@ -183,8 +188,8 @@ export class GameStateManager {
     this.state = result.state;
     this.handleEvents(result.events);
 
-    if (result.returnToLanding) {
-      this.activeScreen = 'landing';
+    if (result.bookCompleted) {
+      this.activeScreen = 'book_complete';
     }
 
     this.notify();

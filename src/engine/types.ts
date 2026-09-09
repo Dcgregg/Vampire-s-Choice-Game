@@ -14,6 +14,7 @@ export type EngineEvent =
   | { type: 'coinsChanged'; delta: number; total: number }
   | { type: 'relationshipChanged'; characterId: string; delta: number; newAffinity: number }
   | { type: 'chapterCompleted'; chapter: number }
+  | { type: 'bookCompleted'; bookId: string }
   | { type: 'streakChanged'; value: number };
 
 /** Resolves a scene id to a Scene, or null when it does not exist. */
@@ -26,8 +27,8 @@ export interface SelectChoiceResult {
   /** Resulting player state (unchanged when ok === false). */
   state: PlayerState;
   events: EngineEvent[];
-  /** true when the choice ends the flow and the host should return to landing. */
-  returnToLanding: boolean;
+  /** Set to the completed book id when the choice ends a book. */
+  bookCompleted?: string;
   /** Set when navigation targeted a scene id that could not be resolved. */
   sceneNotFound?: string;
 }

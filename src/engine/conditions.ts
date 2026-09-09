@@ -89,6 +89,9 @@ export function evaluateCondition(
   if (condition.visitedScene !== undefined && !state.progress.sceneHistory.includes(condition.visitedScene)) {
     reasons.push(`scene "${condition.visitedScene}" not visited`);
   }
+  if (condition.completedBook !== undefined && !state.progress.completedBooks.includes(condition.completedBook)) {
+    reasons.push(`book "${condition.completedBook}" not completed`);
+  }
 
   // --- Player identity / character properties ---
   if (condition.playerGender !== undefined) {
