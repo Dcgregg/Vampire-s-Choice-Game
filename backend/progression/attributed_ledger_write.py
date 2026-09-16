@@ -20,8 +20,11 @@ async def write_attributed_revision(
 ) -> dict:
     """CAS the projection and event identity together, or fail without a write.
 
-    Requires an initialized, retained ``appliedEventIds`` mapping. No upsert,
-    implicit initialization, revision guessing, or post-CAS success inference.
+    Requires an initialized, retained ``appliedEventIds`` mapping. Every
+    non-opening revision must retain attribution for its immediately preceding
+    revision. This is a local continuity check, not proof of the entire history
+    or protection against an unauthorized ledger writer. No upsert, implicit
+    initialization, revision guessing, or post-CAS success inference.
     """
     base, target = event.get("baseRevision"), event.get("targetRevision")
     ledger_id, event_id = event.get("ledgerId"), event.get("eventId")
@@ -39,13 +42,18 @@ async def write_attributed_revision(
         raise AttributionUnproven("incomplete expected checkpoint")
     if not isinstance(projection["checkpoint"], Mapping):
         raise AttributionUnproven("invalid projected checkpoint")
+    filt = {"_id": ledger_id, "progressionRevision": base,
+            "checkpoint": dict(expected_checkpoint),
+            "appliedEventIds": {"$type": "object"},
+            f"appliedEventIds.{target}": {"$exists": False},
+            "mergedInto": {"$exists": False}, "fencedAt": {"$exists": False},
+            "claimedBy": {"$exists": False}}
+    if base > 0:
+        # A foreign revision without its predecessor marker cannot be extended
+        # into an apparently continuous, trusted progression history.
+        filt[f"appliedEventIds.{base}"] = {"$type": "string", "$ne": ""}
     updated = await ledgers.find_one_and_update(
-        {"_id": ledger_id, "progressionRevision": base,
-         "checkpoint": dict(expected_checkpoint),
-         "appliedEventIds": {"$type": "object"},
-         f"appliedEventIds.{target}": {"$exists": False},
-         "mergedInto": {"$exists": False}, "fencedAt": {"$exists": False},
-         "claimedBy": {"$exists": False}},
+        filt,
         {"$set": {**dict(projection), "progressionRevision": target,
                   f"appliedEventIds.{target}": event_id}},
         return_document=ReturnDocument.AFTER, session=session,
