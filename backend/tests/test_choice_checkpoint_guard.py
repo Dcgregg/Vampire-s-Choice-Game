@@ -94,6 +94,35 @@ def test_rejects_inconsistent_coin_projection_without_mutation(confirmed, derive
     assert current == before
 
 
+@pytest.mark.parametrize("recorded,unlocked", [
+    ({"badge": {"unlockedAt": "existing"}}, []),
+    ({}, ["badge"]),
+    ({"badge": {"unlockedAt": "existing"}}, ["badge", "badge"]),
+    ({}, "badge"),
+    ([], []),
+])
+def test_rejects_inconsistent_achievement_projection_without_mutation(recorded, unlocked):
+    current = ledger()
+    current["achievements"] = recorded
+    current["derived"]["achievements"] = unlocked
+    before = deepcopy(current)
+    with pytest.raises(CheckpointConflict, match="achievements disagree"):
+        prepare_nonterminal_choice(registry(), current, event())
+    assert current == before
+
+
+def test_existing_matching_achievement_projection_is_preserved():
+    current = ledger()
+    current["achievements"] = {"badge": {"unlockedAt": "existing"}}
+    current["derived"]["achievements"] = ["badge"]
+    before = deepcopy(current)
+    proposal = prepare_nonterminal_choice(registry(), current, event())
+    assert current == before
+    assert proposal["nextProjection"]["achievements"] == before["achievements"]
+    assert proposal["nextProjection"]["derived"]["achievements"] == ["badge"]
+    assert proposal["awarded"] == []
+
+
 @pytest.mark.parametrize("choice_id,exception", [
     ("award", CheckpointConflict), ("affinity_award", CheckpointConflict),
     ("terminal", CheckpointConflict), ("missing", InvalidChoice),
