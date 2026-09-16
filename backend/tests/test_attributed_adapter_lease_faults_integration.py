@@ -17,7 +17,7 @@ async def case():
     if not uri:
         pytest.skip("TEST_MONGO_URI required; never run against production MongoDB")
     client = AsyncIOMotorClient(uri, serverSelectionTimeoutMS=5000)
-    db = client[f"phase6b_attributed_lease_faults_{uuid4().hex}"]
+    db = client[f"phase6b_lease_faults_{uuid4().hex}"]
     try:
         await client.admin.command("ping")
         store = AttributedMongoReservationStore(db.ledgers, db.events)
