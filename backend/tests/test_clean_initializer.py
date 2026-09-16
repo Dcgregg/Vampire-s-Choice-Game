@@ -87,6 +87,31 @@ async def test_existing_progressed_ledger_is_not_reset_or_reawarded():
 
 
 @pytest.mark.asyncio
+async def test_existing_ledger_is_found_when_original_opening_content_is_retired():
+    collection = UniqueFakeCollection()
+    first = await initialize_clean_account_ledger(collection, registry(), **kwargs())
+    collection.docs[("account", "authenticated-account")]["progressionRevision"] = 3
+    # No new ledger can be seeded from this unavailable version, but an
+    # existing account's ledger must remain discoverable without rewriting it.
+    again = await initialize_clean_account_ledger(collection, {"books": {}}, **kwargs())
+    assert again["_id"] == first["_id"]
+    assert again["progressionRevision"] == 3
+    assert again["checkpoint"] == first["checkpoint"]
+    assert collection.inserts == 1
+    again["coins"]["confirmed"] = 999
+    assert collection.docs[("account", "authenticated-account")]["coins"]["confirmed"] == 0
+
+
+@pytest.mark.asyncio
+async def test_invalid_owner_is_rejected_before_lookup():
+    collection = UniqueFakeCollection()
+    with pytest.raises(InvalidCleanLedger, match="authenticated account owner"):
+        await initialize_clean_account_ledger(collection, registry(),
+                                              **{**kwargs(), "owner_id": "   "})
+    assert collection.inserts == 0
+
+
+@pytest.mark.asyncio
 async def test_invalid_content_never_inserts():
     collection = UniqueFakeCollection()
     with pytest.raises(InvalidCleanLedger):
