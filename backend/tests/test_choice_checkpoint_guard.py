@@ -67,6 +67,9 @@ def test_ordinary_choice_returns_proposal_without_mutation():
     ({"bookId": "other"}, {}),
     ({"fromSceneId": "next", "choiceId": "noncurrent"}, {}),
     ({}, {"fenced": True}),
+    ({}, {"mergedInto": "new-ledger"}),
+    ({}, {"fencedAt": "2026-09-16T12:00:00Z"}),
+    ({}, {"claimedBy": "other-owner"}),
     ({}, {"checkpoint": {"bookId": "book1", "currentSceneId": "start", "terminal": True}}),
 ])
 def test_rejects_wrong_revision_checkpoint_or_fence_without_mutation(event_changes, ledger_changes):
