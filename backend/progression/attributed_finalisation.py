@@ -26,9 +26,9 @@ async def finalise_attributed_event(
 ) -> dict:
     """Finalise only while the event's exact ledger proof is transactionally fenced.
 
-    A guarded same-value ledger write makes a concurrent ledger mutation conflict
-    with this transaction, including a change to the attribution marker. This
-    still requires an exclusive trusted ledger writer and immutable history.
+    A real ledger write makes a concurrent ledger mutation conflict with this
+    transaction, including a change to the attribution marker. This still
+    requires an exclusive trusted ledger writer and immutable history.
     """
     if not isinstance(payload_hash, str) or not payload_hash or event.get("payloadHash") != payload_hash:
         raise AttributionUnproven("event payload mismatch")
@@ -51,14 +51,15 @@ async def finalise_attributed_event(
                 require_event_attribution(ledger, persisted)
                 target = str(persisted["targetRevision"])
                 marker_path = f"appliedEventIds.{target}"
-                # A read alone does not detect a proof mutation after the read.
-                # The guarded write holds a document write conflict until commit.
+                # A same-value $set may be optimised away by MongoDB, leaving
+                # the transaction without a write conflict. This dedicated
+                # metadata increment is an actual write, not an award or revision.
                 guarded = await ledgers.update_one(
                     {"_id": ledger["_id"], "progressionRevision": {"$gte": persisted["targetRevision"]},
                      marker_path: persisted["eventId"]},
-                    {"$set": {marker_path: persisted["eventId"]}}, session=session,
+                    {"$inc": {"attributionProofFence": 1}}, session=session,
                 )
-                if guarded.matched_count != 1:
+                if guarded.matched_count != 1 or guarded.modified_count != 1:
                     raise AttributionUnproven("attribution changed during finalisation")
                 if persisted["status"] == "applied":
                     _require_applied_result(persisted)
