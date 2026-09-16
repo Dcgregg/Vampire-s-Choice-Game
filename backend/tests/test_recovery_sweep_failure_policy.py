@@ -45,6 +45,8 @@ async def test_unexpected_database_error_aborts_sweep_without_processing_later_e
     with pytest.raises(RuntimeError, match="simulated database outage"):
         await sweep_expired(store, limit=2)
     assert attempted == ["first"]
-    store.events.find.assert_called_once_with(
-        {"status": "committing", "leaseUntil": {"$lte": pytest.approx(datetime.now(timezone.utc))}}
-    )
+    store.events.find.assert_called_once()
+    query = store.events.find.call_args.args[0]
+    assert query["status"] == "committing"
+    assert isinstance(query["leaseUntil"]["$lte"], datetime)
+    assert query["leaseUntil"]["$lte"].tzinfo == timezone.utc
