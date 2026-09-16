@@ -7,6 +7,8 @@ from progression.choice_checkpoint_guard import CheckpointConflict, prepare_nont
 from progression.strict_event_input import StrictChoiceEvent, StrictLifecycleEvent
 from progression.trusted_content import InvalidChoice, UnknownContentVersion
 
+UUID4 = "550e8400-e29b-41d4-a716-446655440000"
+
 
 def registry():
     return {
@@ -44,7 +46,7 @@ def ledger():
 
 
 def event(**changes):
-    values = {"kind": "choice", "eventId": "evt_1", "bookId": "book1",
+    values = {"kind": "choice", "eventId": UUID4, "bookId": "book1",
               "contentVersion": 1, "baseProgressionRevision": 3,
               "fromSceneId": "start", "choiceId": "ordinary"}
     values.update(changes)
@@ -187,7 +189,7 @@ def test_rejects_unavailable_pinned_content_version():
 
 
 def test_rejects_lifecycle_event():
-    lifecycle = StrictLifecycleEvent(kind="lifecycle", eventId="evt_2", bookId="book1",
+    lifecycle = StrictLifecycleEvent(kind="lifecycle", eventId=UUID4, bookId="book1",
                                      contentVersion=1, baseProgressionRevision=3,
                                      lifecycleId="start")
     with pytest.raises(CheckpointConflict):
