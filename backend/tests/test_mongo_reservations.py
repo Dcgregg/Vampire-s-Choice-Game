@@ -15,8 +15,9 @@ def store():
     events, ledgers = AsyncMock(), AsyncMock()
     client = MagicMock()
     session = MagicMock()
-    # Motor awaits start_session(), but start_transaction() directly returns
-    # an asynchronous context manager; it must not be an AsyncMock coroutine.
+    # Motor awaits start_session(); entering its context must yield that same
+    # session, whose start_transaction() returns an async context manager.
+    session.__aenter__.return_value = session
     session.start_transaction = MagicMock(return_value=MagicMock())
     client.start_session = AsyncMock(return_value=session)
     events.database.client = client
