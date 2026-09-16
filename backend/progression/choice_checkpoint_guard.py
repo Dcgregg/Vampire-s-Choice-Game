@@ -42,6 +42,12 @@ def prepare_nonterminal_choice(
             or isinstance(derived_coins, bool) or not isinstance(derived_coins, int)
             or derived_coins != confirmed):
         raise CheckpointConflict("confirmed and derived coin balances disagree")
+    unlocked = ledger["derived"]["achievements"]
+    recorded = ledger["achievements"]
+    if (not isinstance(unlocked, list) or not isinstance(recorded, dict)
+            or any(not isinstance(item, str) for item in unlocked)
+            or len(unlocked) != len(set(unlocked)) or set(unlocked) != set(recorded)):
+        raise CheckpointConflict("confirmed and derived achievements disagree")
 
     book = book_entry(registry, event.bookId, event.contentVersion)
     derived = deepcopy(ledger["derived"])
@@ -51,7 +57,7 @@ def prepare_nonterminal_choice(
     )
     if result["endsBook"]:
         raise CheckpointConflict("terminal choice transition is not specified")
-    if result["awarded"] or set(derived["achievements"]) != set(ledger["achievements"]):
+    if result["awarded"] or set(derived["achievements"]) != set(recorded):
         raise CheckpointConflict("achievement ledger metadata is not specified")
     next_scene = result["nextSceneId"]
     if not isinstance(next_scene, str) or next_scene not in book["scenes"]:
@@ -64,7 +70,7 @@ def prepare_nonterminal_choice(
         "expectedCheckpoint": deepcopy(checkpoint),
         "nextProjection": {
             "coins": {"confirmed": derived["coins"]},
-            "achievements": deepcopy(ledger["achievements"]),
+            "achievements": deepcopy(recorded),
             "derived": derived,
             "checkpoint": next_checkpoint,
         },
