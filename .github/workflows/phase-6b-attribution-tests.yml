@@ -1,0 +1,25 @@
+name: Phase 6B attribution predicate tests
+
+on:
+  push:
+    branches: [phase-6b-trusted-progression]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  attribution:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install pytest
+        run: python -m pip install pytest
+      - name: Test inert attribution predicate
+        working-directory: backend
+        run: python -m pytest -q tests/test_attribution.py
