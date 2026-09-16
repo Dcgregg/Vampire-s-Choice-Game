@@ -15,6 +15,20 @@ from .clean_initializer import clean_seed
 from .clean_ledger import InvalidCleanLedger
 
 OPENING_BLOOD_COINS = 50
+_OWNER_INDEX = [("ownerType", 1), ("ownerId", 1)]
+
+
+async def _require_unique_owner_index(ledgers: Any) -> None:
+    """Do not issue coins without a full, unique account-owner index."""
+    indexes = await ledgers.index_information()
+    if not any(
+        index.get("unique") is True
+        and index.get("key") == _OWNER_INDEX
+        and not index.get("sparse")
+        and not index.get("partialFilterExpression")
+        for index in indexes.values()
+    ):
+        raise InvalidCleanLedger("unique account owner index required for opening grant")
 
 
 async def initialize_granted_account_ledger(
@@ -34,6 +48,7 @@ async def initialize_granted_account_ledger(
     existing = await ledgers.find_one(query)
     if existing is not None:
         return deepcopy(existing)
+    await _require_unique_owner_index(ledgers)
     seed = clean_seed(registry, owner_id=owner_id, book_id=book_id,
                       content_version=content_version, scene_id=scene_id)
     seed["coins"] = {"confirmed": OPENING_BLOOD_COINS}
