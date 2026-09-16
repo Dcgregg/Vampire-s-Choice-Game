@@ -24,6 +24,30 @@ from .mongo_reservations import (
 class AttributedMongoReservationStore(MongoReservationStore):
     """Opt-in inert adapter: never infer event authorship from revision alone."""
 
+    async def reserve(self, *, ledger_id: Any, event_id: str, payload_hash: str,
+                      base_revision: int, awards: Mapping[str, Any],
+                      next_projection: Mapping[str, Any] | None = None,
+                      expected_checkpoint: Mapping[str, Any] | None = None) -> dict:
+        """Never accept a retry that changes an already reserved event's intent.
+
+        The parent performs the unique event claim and revision reservation. A
+        matching payload hash alone does not authenticate a different projection
+        or award supplied on a later call. This comparison is not a substitute
+        for the trusted caller and canonical hash integration gates.
+        """
+        event = await super().reserve(
+            ledger_id=ledger_id, event_id=event_id, payload_hash=payload_hash,
+            base_revision=base_revision, awards=awards,
+            next_projection=next_projection, expected_checkpoint=expected_checkpoint,
+        )
+        if event.get("status") != "received" and (
+            event.get("awards") != dict(awards)
+            or (next_projection is not None and event.get("nextProjection") != dict(next_projection))
+            or (expected_checkpoint is not None and event.get("expectedCheckpoint") != dict(expected_checkpoint))
+        ):
+            raise ReservationInvariantError("event_id_reserved_intent_mismatch")
+        return event
+
     async def commit(self, *, event: Mapping[str, Any], lease_owner: str,
                      next_projection: Mapping[str, Any] | None = None,
                      expected_checkpoint: Mapping[str, Any] | None = None) -> dict:
