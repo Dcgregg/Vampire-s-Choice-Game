@@ -18,6 +18,9 @@ def registry():
         "books": {"book1": {"version": 1, "scenes": {
             "start": {"choices": {
                 "ordinary": {"nextSceneId": "next", "effects": {"coinsChange": 10}},
+                "spend_and_change": {"nextSceneId": "next", "effects": {
+                    "coinsChange": -50, "setFlags": {"helped": True},
+                    "relationshipChanges": {"friend": 2}}},
                 "award": {"nextSceneId": "next", "effects": {"achievementId": "badge"}},
                 "affinity_award": {"nextSceneId": "next", "effects": {
                     "relationshipChanges": {"friend": 5}}},
@@ -59,6 +62,20 @@ def test_ordinary_choice_returns_proposal_without_mutation():
     assert proposal["nextProjection"]["derived"]["coins"] == 30
     assert proposal["awarded"] == []
     proposal["expectedCheckpoint"]["currentSceneId"] = "tampered"
+    assert current == before
+
+
+def test_spending_and_non_award_effects_preserve_coin_floor_and_input():
+    current = ledger()
+    before = deepcopy(current)
+    proposal = prepare_nonterminal_choice(registry(), current, event(choiceId="spend_and_change"))
+    assert current == before
+    assert proposal["nextProjection"]["coins"]["confirmed"] == 0
+    assert proposal["nextProjection"]["derived"] == {
+        "coins": 0, "affinity": {"friend": 2}, "flags": {"helped": True}, "achievements": []}
+    assert proposal["nextProjection"]["checkpoint"]["currentSceneId"] == "next"
+    assert proposal["awarded"] == []
+    proposal["nextProjection"]["derived"]["flags"]["helped"] = False
     assert current == before
 
 
