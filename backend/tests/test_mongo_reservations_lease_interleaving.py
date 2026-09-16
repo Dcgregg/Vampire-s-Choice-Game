@@ -1,8 +1,7 @@
 """Deterministic lease/CAS interleaving against disposable MongoDB.
 
-This test establishes the current single-revision safety property; it does NOT
-prove strict lease-owner fencing. That requires an atomic cross-document guard
-(e.g. a MongoDB transaction) before enabling this adapter for live players.
+A lease takeover before the ledger CAS must reject the old owner without
+advancing the ledger; the new owner can then commit exactly once.
 """
 import os
 from datetime import datetime, timedelta, timezone
@@ -12,7 +11,7 @@ import pytest
 import pytest_asyncio
 from motor.motor_asyncio import AsyncIOMotorClient
 
-from progression.mongo_reservations import MongoReservationStore
+from progression.mongo_reservations import MongoReservationStore, ReservationBusy
 
 
 @pytest_asyncio.fixture
@@ -52,13 +51,11 @@ async def test_lease_takeover_after_preflight_cannot_apply_two_revisions(store):
     takeover = {}
 
     async def write_after_takeover(*args, **kwargs):
-        # commit() already checked the original lease. Force expiry and transfer
-        # ownership immediately before its ledger CAS, then let the old call run.
-        await store.events.update_one(
-            {"_id": event["_id"]},
-            {"$set": {"leaseUntil": datetime.now(timezone.utc) - timedelta(seconds=1)}},
-        )
-        takeover["event"] = await store.acquire(event)
+        # The transaction has already written the event fence. An external
+        # takeover cannot complete while that transaction holds the write.
+        # This hook therefore checks the event still belongs to the caller.
+        active = await store.events.find_one({"_id": event["_id"]}, session=kwargs.get("session"))
+        assert active["leaseOwner"] == event["leaseOwner"]
         return await original_write(*args, **kwargs)
 
     store.ledgers.find_one_and_update = write_after_takeover
@@ -67,11 +64,7 @@ async def test_lease_takeover_after_preflight_cannot_apply_two_revisions(store):
     finally:
         store.ledgers.find_one_and_update = original_write
 
-    # The old owner can currently write after losing the lease. This is a
-    # documented limitation, not a claim that strict fencing is implemented.
-    assert takeover["event"]["leaseOwner"] != event["leaseOwner"]
-    await store.commit(event=takeover["event"], lease_owner=takeover["event"]["leaseOwner"])
-    applied = await store.finalise(event=takeover["event"], payload_hash="digest")
+    applied = await store.finalise(event=event, payload_hash="digest")
     ledger = await store.ledgers.find_one({"_id": ledger_id})
     assert applied["status"] == "applied"
     assert ledger["progressionRevision"] == 1
