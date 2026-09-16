@@ -3,6 +3,8 @@ name: Phase 6B progression tests
 on:
   push:
     branches: [phase-6b-trusted-progression]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
