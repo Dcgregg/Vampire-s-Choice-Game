@@ -15,6 +15,9 @@ def store():
     events, ledgers = AsyncMock(), AsyncMock()
     client = MagicMock()
     session = MagicMock()
+    # Motor awaits start_session(), but start_transaction() directly returns
+    # an asynchronous context manager; it must not be an AsyncMock coroutine.
+    session.start_transaction = MagicMock(return_value=MagicMock())
     client.start_session = AsyncMock(return_value=session)
     events.database.client = client
     return MongoReservationStore(ledgers, events)
