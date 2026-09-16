@@ -28,6 +28,8 @@ def validate_clean_ledger(registry: Mapping[str, Any], ledger: Mapping[str, Any]
         raise InvalidCleanLedger("account owner mismatch")
     if type(ledger.get("progressionRevision")) is not int or ledger["progressionRevision"] != 0:
         raise InvalidCleanLedger("initial revision must be zero")
+    if ledger.get("appliedEventIds") != {} or not isinstance(ledger.get("appliedEventIds"), Mapping):
+        raise InvalidCleanLedger("initial event attribution must be an empty mapping")
     if ledger.get("openingGranted") is not False or ledger.get("lifecycleApplied") != []:
         raise InvalidCleanLedger("initial awards or lifecycle markers are not empty")
     if ledger.get("achievements") != {} or ledger.get("coins") != {"confirmed": 0}:
