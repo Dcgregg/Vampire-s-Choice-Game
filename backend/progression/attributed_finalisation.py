@@ -13,6 +13,13 @@ from pymongo import ReturnDocument
 from .attribution import AttributionUnproven, require_event_attribution
 
 
+def _require_applied_result(event: Mapping[str, Any]) -> None:
+    """An applied status is not proof when its recorded result is inconsistent."""
+    if (type(event.get("resultRevision")) is not int
+            or event["resultRevision"] != event.get("targetRevision")):
+        raise AttributionUnproven("applied event has inconsistent result revision")
+
+
 async def finalise_attributed_event(
     ledgers: Any, events: Any, *, event: Mapping[str, Any], payload_hash: str,
 ) -> dict:
@@ -37,6 +44,7 @@ async def finalise_attributed_event(
         raise AttributionUnproven("ledger missing")
     require_event_attribution(ledger, persisted)
     if persisted["status"] == "applied":
+        _require_applied_result(persisted)
         return persisted
     result = await events.find_one_and_update(
         {"_id": persisted["_id"], "status": "committing",
@@ -48,6 +56,7 @@ async def finalise_attributed_event(
         return_document=ReturnDocument.AFTER,
     )
     if result is not None:
+        _require_applied_result(result)
         return result
     raced = await events.find_one({"_id": persisted["_id"]})
     if raced is None or raced.get("status") != "applied" or any(
@@ -56,4 +65,5 @@ async def finalise_attributed_event(
         )
     ):
         raise AttributionUnproven("event finalisation raced without matching proof")
+    _require_applied_result(raced)
     return raced
