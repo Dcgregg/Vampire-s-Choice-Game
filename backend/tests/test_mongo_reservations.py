@@ -17,7 +17,7 @@ def store():
     session = MagicMock()
     client.start_session = AsyncMock(return_value=session)
     events.database.client = client
-    return MongoReservationStore(events, ledgers)
+    return MongoReservationStore(ledgers, events)
 
 
 def checkpoint():
