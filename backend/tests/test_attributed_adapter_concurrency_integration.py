@@ -81,3 +81,34 @@ async def test_foreign_revision_after_reservation_never_becomes_our_award(case):
     assert ledger["coins"]["confirmed"] == 0
     assert ledger["appliedEventIds"] == {"1": "foreign"}
     assert (await store.events.find_one({"_id": event["_id"]}))["status"] == "committing"
+
+
+@pytest.mark.asyncio
+async def test_recovery_after_commit_before_finalisation_is_idempotent(case):
+    store, event = case
+    await store.commit(event=event, lease_owner=event["leaseOwner"])
+    pending = await store.events.find_one({"_id": event["_id"]})
+    assert pending["status"] == "committing"
+    recovered = await store.recover(pending)
+    retried = await store.recover(recovered)
+    ledger = await store.ledgers.find_one({"_id": event["ledgerId"]})
+    assert recovered["status"] == retried["status"] == "applied"
+    assert recovered["resultRevision"] == retried["resultRevision"] == 1
+    assert ledger["progressionRevision"] == 1
+    assert ledger["coins"]["confirmed"] == 10
+    assert ledger["appliedEventIds"] == {"1": event["eventId"]}
+
+
+@pytest.mark.asyncio
+async def test_recovery_rejects_applied_status_if_attribution_disappears(case):
+    store, event = case
+    await store.commit(event=event, lease_owner=event["leaseOwner"])
+    applied = await store.finalise(event=event, payload_hash="digest")
+    await store.ledgers.update_one(
+        {"_id": event["ledgerId"]}, {"$unset": {"appliedEventIds.1": ""}},
+    )
+    with pytest.raises(AttributionUnproven):
+        await store.recover(applied)
+    persisted = await store.events.find_one({"_id": event["_id"]})
+    assert persisted["status"] == "applied"
+    assert persisted["resultRevision"] == 1
