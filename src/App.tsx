@@ -5,6 +5,7 @@ import { BottomNav } from './components/common/BottomNav';
 import { AchievementBanner } from './components/common/AchievementBanner';
 import { ConsequenceToast } from './components/common/ConsequenceToast';
 import { OfflineIndicator } from './components/common/OfflineIndicator';
+import { AccountBar } from './components/common/AccountBar';
 
 import { LandingScreen } from './components/screens/LandingScreen';
 import { CharacterCreationScreen } from './components/screens/CharacterCreationScreen';
@@ -22,6 +23,7 @@ const MainContent: React.FC = () => {
   return (
     <div className="min-h-screen bg-[#09070c] text-[#ede5d8] flex flex-col font-sans selection:bg-rose-950 selection:text-rose-200">
       <Navbar />
+      <AccountBar />
       <OfflineIndicator />
       <AchievementBanner />
       <ConsequenceToast />

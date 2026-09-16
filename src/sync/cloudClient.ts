@@ -57,3 +57,66 @@ export async function putSave(playerId: string, payload: SavePayload): Promise<P
   if (!r.ok) throw new Error(`putSave failed: ${r.status}`);
   return { ok: true, save: (await r.json()) as CloudSave };
 }
+
+// ---- Authenticated (account) endpoints — rely on the httpOnly session cookie ----
+export interface PublicUser { email: string; name: string; picture?: string | null; }
+
+export async function exchangeSession(sessionId: string): Promise<PublicUser> {
+  const r = await fetch(`${API_BASE}/auth/session`, {
+    method: 'POST', credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ session_id: sessionId }),
+  });
+  if (!r.ok) throw new Error(`session exchange failed: ${r.status}`);
+  return (await r.json()) as PublicUser;
+}
+
+export async function getMe(): Promise<PublicUser | null> {
+  const r = await fetch(`${API_BASE}/auth/me`, { credentials: 'include' });
+  if (!r.ok) return null;
+  return (await r.json()) as PublicUser;
+}
+
+export async function logoutApi(): Promise<void> {
+  try { await fetch(`${API_BASE}/auth/logout`, { method: 'POST', credentials: 'include' }); } catch { /* ignore */ }
+}
+
+export async function getAccountSave(): Promise<CloudSave | null> {
+  const r = await fetch(`${API_BASE}/me/save`, { credentials: 'include' });
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error(`getAccountSave failed: ${r.status}`);
+  return (await r.json()) as CloudSave;
+}
+
+export async function putAccountSave(payload: SavePayload): Promise<PutResult> {
+  const r = await fetch(`${API_BASE}/me/save`, {
+    method: 'PUT', credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (r.status === 409) {
+    const body = await r.json().catch(() => ({}));
+    return { ok: false, currentSave: body.currentSave ?? null };
+  }
+  if (!r.ok) throw new Error(`putAccountSave failed: ${r.status}`);
+  return { ok: true, save: (await r.json()) as CloudSave };
+}
+
+export type ClaimResult =
+  | { ok: true; save: CloudSave }
+  | { ok: false; conflict: true; accountSave: CloudSave; anonymousSave: any }
+  | { ok: false; error: string };
+
+export async function claimSave(playerId: string, strategy?: 'use_account' | 'use_anonymous'): Promise<ClaimResult> {
+  const r = await fetch(`${API_BASE}/me/claim`, {
+    method: 'POST', credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ playerId, strategy }),
+  });
+  if (r.ok) return { ok: true, save: (await r.json()) as CloudSave };
+  const body = await r.json().catch(() => ({}));
+  if (r.status === 409 && body.error === 'claim_conflict') {
+    return { ok: false, conflict: true, accountSave: body.accountSave, anonymousSave: body.anonymousSave };
+  }
+  return { ok: false, error: (body.detail && body.detail.error) || body.error || `http_${r.status}` };
+}
