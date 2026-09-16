@@ -103,7 +103,7 @@ async def test_commit_uses_persisted_projection_in_single_conditional_write(stor
     filt, update = store.ledgers.find_one_and_update.await_args.args
     assert store.ledgers.find_one_and_update.await_args.kwargs["session"] is fence_session
     assert filt["progressionRevision"] == 4
-    assert filt["checkpoint.currentSceneId"] == "start"
+    assert filt["checkpoint"] == checkpoint()
     assert update["$set"]["progressionRevision"] == 5
     assert update["$set"]["coins"]["confirmed"] == 260
 
