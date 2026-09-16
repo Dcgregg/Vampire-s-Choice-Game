@@ -47,6 +47,14 @@ Commit: `5fc70dd5809b97915fcdbed2510ff1cc7e3ef0d5`.
 - New test-ids: `account-error-banner`, `account-retry-link-btn`, `account-dismiss-error-btn`, `conflict-error-msg`.
 - Remaining risk: sync-manager PUSH conflict still auto-adopts cloud over unsynced local edits ("Synced (merged)") — left as-is per scope; revisit if user wants user-resolved push conflicts.
 
+## Phase 5 Final hardening — PUSH conflict protection (2026-09-16) — DONE, verified
+Closes the last remaining Phase-5 progress-loss risk (the "auto-adopt cloud on PUSH 409" noted above). Commit: `34a4b44f7cc1e53fefa674f4a9e8172a6956dc43`. Phase 6 NOT started.
+- `src/sync/syncManager.ts`: on PUSH 409 it now PRESERVES both local + cloud and enters an explicit conflict (never adopts cloud / never marks synced / never advances revision on a lost race). Auto-push is blocked while a conflict is outstanding (push/scheduleSync/scheduleRetry early-return, timers cancelled). `resolvePushConflict('local'|'cloud')`: 'local' re-pushes current local state at the latest cloud revision and only marks synced on server confirm (a 2nd 409 keeps both + refreshes cloud snapshot; network/5xx keeps both + allows retry); 'cloud' adopts cloud after UI confirm. `exitAccountMode` clears it.
+- `src/components/common/AccountBar.tsx`: minimal gothic `PushConflictModal` (device vs cloud info, inline error + retry, explicit confirm before discarding device progress). 'conflict' sync-chip label changed 'Synced (merged)' → 'Action needed'.
+- Tests: `src/sync/__tests__/pushConflict.test.ts` (7) — 409-preserves-both, no-auto-push, keep-device retry-at-latest, keep-cloud adopt, second-conflict, network-failure-then-retry, logout-clears. Frontend 81/81, backend 20/20, tsc clean, prod build OK. testing-agent iteration_7 frontend 100%.
+- New test-ids: `push-conflict-modal`, `push-conflict-local-info`, `push-conflict-cloud-info`, `push-conflict-keep-device-btn`, `push-conflict-keep-cloud-btn`, `push-conflict-confirm-cloud-btn`, `push-conflict-cancel-cloud-btn`, `push-conflict-error-msg`.
+- Benign observation (not a live bug): 409 JSONResponse branches serialize saves that our code always writes with ISO-string timestamps (`_now()`), so stdlib json is safe; a future raw-datetime write would need `jsonable_encoder`.
+
 ## Recommended phases (2 done; awaiting approval for 3)
 1. Stabilize + fix small bugs (streak, book-end loop, completedChapters), drop dead deps.
 2. **FIRST BUILD:** extract pure, tested Story Engine + enforce `choice.condition`; add zod content validation.
