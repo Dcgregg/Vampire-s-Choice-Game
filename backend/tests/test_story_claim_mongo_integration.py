@@ -105,6 +105,41 @@ async def test_concurrent_identical_claims_create_one_account_save(collections):
 
 
 @pytest.mark.asyncio
+async def test_competing_accounts_cannot_both_claim_same_anonymous_save(collections):
+    anon, account = collections
+    await anon.insert_one(anonymous_doc())
+    outcomes = await asyncio.gather(
+        claim(anon, account, authenticated_user_id="user-one"),
+        claim(anon, account, authenticated_user_id="user-two"),
+        return_exceptions=True,
+    )
+    winners = [result for result in outcomes if isinstance(result, dict)]
+    losers = [result for result in outcomes if isinstance(result, Exception)]
+    assert len(winners) == len(losers) == 1
+    assert isinstance(losers[0], (StoryClaimConflict, StoryClaimDenied))
+    assert await account.count_documents({}) == 1
+    fenced = await anon.find_one({"playerId": "vc_abcdefgh"})
+    assert fenced["claimedBy"] == winners[0]["userId"]
+    assert (await account.find_one({"userId": winners[0]["userId"]}))["historicalAnonymousId"] == "vc_abcdefgh"
+    with pytest.raises(StoryClaimDenied):
+        await claim(anon, account, authenticated_user_id=("user-two" if winners[0]["userId"] == "user-one" else "user-one"))
+
+
+@pytest.mark.asyncio
+async def test_conflicting_existing_account_cannot_reuse_claimed_anonymous_save(collections):
+    anon, account = collections
+    await anon.insert_one(anonymous_doc())
+    original = await claim(anon, account)
+    await account.update_one({"userId": "user-one"}, {"$set": {"historicalAnonymousId": "vc_other", "revision": 8}})
+    with pytest.raises(StoryClaimConflict):
+        await claim(anon, account)
+    assert await account.count_documents({}) == 1
+    assert (await account.find_one({"userId": "user-one"}))["revision"] == 8
+    assert (await anon.find_one({"playerId": "vc_abcdefgh"}))["claimedBy"] == "user-one"
+    assert original["_id"] == (await account.find_one({"userId": "user-one"}))["_id"]
+
+
+@pytest.mark.asyncio
 async def test_missing_authenticated_identity_cannot_claim(collections):
     anon, account = collections
     await anon.insert_one(anonymous_doc())
