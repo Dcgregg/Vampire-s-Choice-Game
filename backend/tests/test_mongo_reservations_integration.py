@@ -3,17 +3,18 @@
 These do not prove crash safety or production readiness. No production URI is read.
 """
 import asyncio
+import os
 from uuid import uuid4
 
 import pytest
+import pytest_asyncio
 from motor.motor_asyncio import AsyncIOMotorClient
 
 from progression.mongo_reservations import MongoReservationStore, ProgressionConflict
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def mongo_store():
-    import os
     uri = os.environ.get("TEST_MONGO_URI")
     if not uri:
         pytest.skip("TEST_MONGO_URI not set: no disposable MongoDB")
