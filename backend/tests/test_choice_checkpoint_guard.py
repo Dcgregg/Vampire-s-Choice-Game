@@ -10,17 +10,23 @@ from progression.trusted_content import InvalidChoice, UnknownContentVersion
 
 def registry():
     return {
-        "characters": {},
+        "characters": {"friend": 0},
         "rules": {"affinityMin": -100, "affinityMax": 100, "coinsMin": 0,
-                  "derivedAchievements": []},
+                  "derivedAchievements": [
+                      {"type": "affinityThreshold", "id": "friend_badge", "threshold": 5},
+                  ]},
         "books": {"book1": {"version": 1, "scenes": {
             "start": {"choices": {
                 "ordinary": {"nextSceneId": "next", "effects": {"coinsChange": 10}},
                 "award": {"nextSceneId": "next", "effects": {"achievementId": "badge"}},
+                "affinity_award": {"nextSceneId": "next", "effects": {
+                    "relationshipChanges": {"friend": 5}}},
                 "terminal": {"nextSceneId": "end", "endsBook": True},
                 "missing": {"nextSceneId": "missing_scene"},
             }},
-            "next": {"choices": {}},
+            "next": {"choices": {
+                "noncurrent": {"nextSceneId": "end", "effects": {"coinsChange": 500}},
+            }},
             "end": {"choices": {}},
         }}},
     }
@@ -30,7 +36,7 @@ def ledger():
     return {"progressionRevision": 3,
             "checkpoint": {"bookId": "book1", "currentSceneId": "start", "terminal": False},
             "coins": {"confirmed": 20}, "achievements": {},
-            "derived": {"coins": 20, "affinity": {}, "flags": {}, "achievements": []}}
+            "derived": {"coins": 20, "affinity": {"friend": 0}, "flags": {}, "achievements": []}}
 
 
 def event(**changes):
@@ -59,7 +65,7 @@ def test_ordinary_choice_returns_proposal_without_mutation():
 @pytest.mark.parametrize("event_changes,ledger_changes", [
     ({"baseProgressionRevision": 2}, {}),
     ({"bookId": "other"}, {}),
-    ({"fromSceneId": "next"}, {}),
+    ({"fromSceneId": "next", "choiceId": "noncurrent"}, {}),
     ({}, {"fenced": True}),
     ({}, {"checkpoint": {"bookId": "book1", "currentSceneId": "start", "terminal": True}}),
 ])
@@ -73,8 +79,9 @@ def test_rejects_wrong_revision_checkpoint_or_fence_without_mutation(event_chang
 
 
 @pytest.mark.parametrize("choice_id,exception", [
-    ("award", CheckpointConflict), ("terminal", CheckpointConflict),
-    ("missing", InvalidChoice), ("unknown", InvalidChoice),
+    ("award", CheckpointConflict), ("affinity_award", CheckpointConflict),
+    ("terminal", CheckpointConflict), ("missing", InvalidChoice),
+    ("unknown", InvalidChoice),
 ])
 def test_rejects_unsupported_or_invalid_choices_without_mutation(choice_id, exception):
     current = ledger()
