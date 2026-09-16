@@ -54,10 +54,13 @@ async def claim_story_only(
     story = story_only_player_state(anon.get("playerState"))
     existing = await account_saves.find_one({"userId": authenticated_user_id})
     if existing is not None:
-        # A previously completed claim can be retried safely; do not overwrite.
-        if (anon.get("claimedBy") == authenticated_user_id
-                and existing.get("historicalAnonymousId") == player_id):
-            return deepcopy(existing)
+        # The initial anonymous read may predate another request's successful
+        # claim. Re-read its fence before accepting an idempotent retry.
+        if existing.get("historicalAnonymousId") == player_id:
+            latest = await anonymous_saves.find_one({"playerId": player_id})
+            if (latest is not None and latest.get("claimedBy") == authenticated_user_id
+                    and latest.get("revision") == expected_anonymous_revision):
+                return deepcopy(existing)
         raise StoryClaimConflict("account already has a save; explicit choice required")
 
     result = await anonymous_saves.update_one(
