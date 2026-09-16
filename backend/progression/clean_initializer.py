@@ -45,19 +45,23 @@ def clean_seed(registry: Mapping[str, Any], *, owner_id: str,
 async def initialize_clean_account_ledger(ledgers: Any, registry: Mapping[str, Any], *,
                                           owner_id: str, book_id: str,
                                           content_version: int, scene_id: str) -> dict:
-    """Insert once, or return the same validated seed after a uniqueness race.
+    """Insert once, or return the existing account ledger unchanged.
 
-    Requires a preinstalled UNIQUE index on (ownerType, ownerId). This function
-    never creates indexes, imports legacy saves, applies an opening grant, or
-    overwrites a progressed ledger. A progressed existing ledger is returned
-    unchanged; the authenticated caller must separately validate it before use.
+    Requires a preinstalled UNIQUE index on (ownerType, ownerId). The owner ID
+    must come from authentication, never the browser. Existing ledgers are read
+    before validating *new* opening content: retired opening content must not
+    prevent finding an already-progressed ledger. A trusted caller must still
+    separately validate existing ledger state before use. New ledgers require
+    valid trusted content. This never imports saves or applies opening awards.
     """
-    seed = clean_seed(registry, owner_id=owner_id, book_id=book_id,
-                      content_version=content_version, scene_id=scene_id)
+    if not isinstance(owner_id, str) or not owner_id.strip():
+        raise InvalidCleanLedger("missing authenticated account owner")
     query = {"ownerType": "account", "ownerId": owner_id}
     existing = await ledgers.find_one(query)
     if existing is not None:
         return deepcopy(existing)
+    seed = clean_seed(registry, owner_id=owner_id, book_id=book_id,
+                      content_version=content_version, scene_id=scene_id)
     try:
         await ledgers.insert_one(deepcopy(seed))
     except DuplicateKeyError:
