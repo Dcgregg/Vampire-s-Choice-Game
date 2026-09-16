@@ -37,7 +37,8 @@ def registry():
 
 def ledger():
     return {"progressionRevision": 3,
-            "checkpoint": {"bookId": "book1", "currentSceneId": "start", "terminal": False},
+            "checkpoint": {"bookId": "book1", "contentVersion": 1,
+                           "currentSceneId": "start", "terminal": False},
             "coins": {"confirmed": 20}, "achievements": {},
             "derived": {"coins": 20, "affinity": {"friend": 0}, "flags": {}, "achievements": []}}
 
@@ -57,7 +58,8 @@ def test_ordinary_choice_returns_proposal_without_mutation():
     assert current == before
     assert proposal["expectedCheckpoint"] == before["checkpoint"]
     assert proposal["nextProjection"]["checkpoint"] == {
-        "bookId": "book1", "currentSceneId": "next", "terminal": False}
+        "bookId": "book1", "contentVersion": 1,
+        "currentSceneId": "next", "terminal": False}
     assert proposal["nextProjection"]["coins"]["confirmed"] == 30
     assert proposal["nextProjection"]["derived"]["coins"] == 30
     assert proposal["awarded"] == []
@@ -74,6 +76,7 @@ def test_spending_and_non_award_effects_preserve_coin_floor_and_input():
     assert proposal["nextProjection"]["derived"] == {
         "coins": 0, "affinity": {"friend": 2}, "flags": {"helped": True}, "achievements": []}
     assert proposal["nextProjection"]["checkpoint"]["currentSceneId"] == "next"
+    assert proposal["nextProjection"]["checkpoint"]["contentVersion"] == 1
     assert proposal["awarded"] == []
     proposal["nextProjection"]["derived"]["flags"]["helped"] = False
     assert current == before
@@ -87,7 +90,8 @@ def test_spending_and_non_award_effects_preserve_coin_floor_and_input():
     ({}, {"mergedInto": "new-ledger"}),
     ({}, {"fencedAt": "2026-09-16T12:00:00Z"}),
     ({}, {"claimedBy": "other-owner"}),
-    ({}, {"checkpoint": {"bookId": "book1", "currentSceneId": "start", "terminal": True}}),
+    ({}, {"checkpoint": {"bookId": "book1", "contentVersion": 1,
+                         "currentSceneId": "start", "terminal": True}}),
 ])
 def test_rejects_wrong_revision_checkpoint_or_fence_without_mutation(event_changes, ledger_changes):
     current = ledger()
@@ -153,9 +157,33 @@ def test_rejects_unsupported_or_invalid_choices_without_mutation(choice_id, exce
     assert current == before
 
 
-def test_rejects_unpinned_content_version():
+@pytest.mark.parametrize("pin", [None, 0, -1, True, 1.0, "1", 2])
+def test_rejects_missing_invalid_or_mismatched_durable_pin_without_mutation(pin):
+    current = ledger()
+    if pin is None:
+        del current["checkpoint"]["contentVersion"]
+    else:
+        current["checkpoint"]["contentVersion"] = pin
+    before = deepcopy(current)
+    with pytest.raises(CheckpointConflict, match="durable content version"):
+        prepare_nonterminal_choice(registry(), current, event())
+    assert current == before
+
+
+def test_rejects_valid_registry_version_when_it_differs_from_durable_pin():
+    current = ledger()
+    current["checkpoint"]["contentVersion"] = 2
+    available = registry()
+    available["books"]["book1"]["version"] = 2
+    with pytest.raises(CheckpointConflict, match="durable content version"):
+        prepare_nonterminal_choice(available, current, event(contentVersion=1))
+
+
+def test_rejects_unavailable_pinned_content_version():
+    current = ledger()
+    current["checkpoint"]["contentVersion"] = 2
     with pytest.raises(UnknownContentVersion):
-        prepare_nonterminal_choice(registry(), ledger(), event(contentVersion=2))
+        prepare_nonterminal_choice(registry(), current, event(contentVersion=2))
 
 
 def test_rejects_lifecycle_event():
