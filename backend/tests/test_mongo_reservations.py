@@ -1,5 +1,5 @@
 """Mock-level adapter tests; real MongoDB tests live in integration suite."""
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from pymongo.errors import DuplicateKeyError
@@ -12,7 +12,12 @@ from progression.mongo_reservations import (
 
 @pytest.fixture
 def store():
-    return MongoReservationStore(AsyncMock(), AsyncMock())
+    events, ledgers = AsyncMock(), AsyncMock()
+    client = MagicMock()
+    session = MagicMock()
+    client.start_session = AsyncMock(return_value=session)
+    events.database.client = client
+    return MongoReservationStore(events, ledgers)
 
 
 def checkpoint():
@@ -83,10 +88,16 @@ async def test_commit_uses_persisted_projection_in_single_conditional_write(stor
              "baseRevision": 4, "targetRevision": 5, "nextProjection": projection(),
              "expectedCheckpoint": checkpoint()}
     store.events.find_one.return_value = event
+    store.events.find_one_and_update.return_value = {**event, "commitFence": 1}
     store.ledgers.find_one_and_update.return_value = {"progressionRevision": 5}
     result = await store.commit(event=event, lease_owner="worker")
     assert result["progressionRevision"] == 5
+    fence_filter, fence_update = store.events.find_one_and_update.await_args.args
+    assert fence_filter["leaseOwner"] == "worker"
+    assert fence_update == {"$inc": {"commitFence": 1}}
+    fence_session = store.events.find_one_and_update.await_args.kwargs["session"]
     filt, update = store.ledgers.find_one_and_update.await_args.args
+    assert store.ledgers.find_one_and_update.await_args.kwargs["session"] is fence_session
     assert filt["progressionRevision"] == 4
     assert filt["checkpoint.currentSceneId"] == "start"
     assert update["$set"]["progressionRevision"] == 5
@@ -101,6 +112,7 @@ async def test_unpersisted_projection_cannot_commit(store):
     with pytest.raises(ReservationInvariantError, match="no durable projection"):
         await store.commit(event=event, lease_owner="worker", next_projection=projection(),
                            expected_checkpoint=checkpoint())
+    store.events.find_one_and_update.assert_not_awaited()
     store.ledgers.find_one_and_update.assert_not_awaited()
 
 
