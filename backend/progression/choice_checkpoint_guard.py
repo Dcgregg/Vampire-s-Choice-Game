@@ -36,6 +36,10 @@ def prepare_nonterminal_choice(
         raise CheckpointConflict("progression revision changed")
     if event.bookId != checkpoint["bookId"] or event.fromSceneId != checkpoint["currentSceneId"]:
         raise CheckpointConflict("choice does not match durable checkpoint")
+    pinned_version = checkpoint.get("contentVersion")
+    if (isinstance(pinned_version, bool) or not isinstance(pinned_version, int)
+            or pinned_version <= 0 or event.contentVersion != pinned_version):
+        raise CheckpointConflict("choice does not match durable content version")
     confirmed = ledger["coins"]["confirmed"]
     derived_coins = ledger["derived"]["coins"]
     if (isinstance(confirmed, bool) or not isinstance(confirmed, int) or confirmed < 0
@@ -49,10 +53,10 @@ def prepare_nonterminal_choice(
             or len(unlocked) != len(set(unlocked)) or set(unlocked) != set(recorded)):
         raise CheckpointConflict("confirmed and derived achievements disagree")
 
-    book = book_entry(registry, event.bookId, event.contentVersion)
+    book = book_entry(registry, event.bookId, pinned_version)
     derived = deepcopy(ledger["derived"])
     result = apply_choice(
-        registry, derived, event.bookId, event.contentVersion,
+        registry, derived, event.bookId, pinned_version,
         event.fromSceneId, event.choiceId,
     )
     if result["endsBook"]:
