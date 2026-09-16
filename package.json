@@ -10,6 +10,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
+    "content:export": "tsx scripts/exportTrustedContent.ts",
     "lint": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"

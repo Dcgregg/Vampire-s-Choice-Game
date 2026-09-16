@@ -55,6 +55,11 @@ Closes the last remaining Phase-5 progress-loss risk (the "auto-adopt cloud on P
 - New test-ids: `push-conflict-modal`, `push-conflict-local-info`, `push-conflict-cloud-info`, `push-conflict-keep-device-btn`, `push-conflict-keep-cloud-btn`, `push-conflict-confirm-cloud-btn`, `push-conflict-cancel-cloud-btn`, `push-conflict-error-msg`.
 - Benign observation (not a live bug): 409 JSONResponse branches serialize saves that our code always writes with ISO-string timestamps (`_now()`), so stdlib json is safe; a future raw-datetime write would need `jsonable_encoder`.
 
+## Book I completion regression test (2026-09-16) — DONE
+Regression-safety only (no feature work; Phase 6 NOT started). Commit: `fcc632198881807af076ef60a9740abf8b0d329e`.
+- Added `src/state/__tests__/bookComplete.regression.test.ts` — drives the REAL `GameStateManager` with the real Story Engine + current Book I content (only audio + syncManager side effects stubbed; hoisted in-memory localStorage). Verifies: valid Lucian-path playthrough reaches the finale as 'reading'; the book-ending choice records completion via `completedBooks` and resolves `activeScreen` to `book_complete`; the finale is not reset to the opening scene; and `continueStory()` on a completed book routes to `book_complete` (never the unfinished finale).
+- No application code changed. Frontend 83/83, tsc clean, prod build OK.
+
 ## Recommended phases (2 done; awaiting approval for 3)
 1. Stabilize + fix small bugs (streak, book-end loop, completedChapters), drop dead deps.
 2. **FIRST BUILD:** extract pure, tested Story Engine + enforce `choice.condition`; add zod content validation.

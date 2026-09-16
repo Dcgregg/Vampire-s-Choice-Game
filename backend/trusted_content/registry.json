@@ -1,0 +1,538 @@
+{
+  "books": {
+    "book1": {
+      "scenes": {
+        "b1_c1_s1": {
+          "chapterNumber": 1,
+          "choices": {
+            "c1_call_out": {
+              "condition": null,
+              "effects": {
+                "achievementId": "FIRST_CHOICE",
+                "relationshipChanges": {
+                  "nico": 6
+                },
+                "setFlags": {
+                  "alertedGuard": true,
+                  "metNico": true
+                }
+              },
+              "endsBook": false,
+              "nextSceneId": "b1_c1_s2c"
+            },
+            "c1_investigate_lectern": {
+              "condition": null,
+              "effects": {
+                "achievementId": "FIRST_CHOICE",
+                "relationshipChanges": {
+                  "isolde": 6
+                },
+                "setFlags": {
+                  "hasSilverKey": true,
+                  "metIsolde": true,
+                  "studiedGrimoire": true
+                }
+              },
+              "endsBook": false,
+              "nextSceneId": "b1_c1_s2b"
+            },
+            "c1_pursue_shadow": {
+              "condition": null,
+              "effects": {
+                "achievementId": "FIRST_CHOICE",
+                "relationshipChanges": {
+                  "lucian": 6
+                },
+                "setFlags": {
+                  "metLucian": true,
+                  "pursuedShadow": true
+                }
+              },
+              "endsBook": false,
+              "nextSceneId": "b1_c1_s2a"
+            }
+          }
+        },
+        "b1_c1_s2a": {
+          "chapterNumber": 1,
+          "choices": {
+            "c2a_demand_answers": {
+              "condition": null,
+              "effects": {
+                "relationshipChanges": {
+                  "isolde": 2,
+                  "lucian": 3
+                },
+                "setFlags": {
+                  "waryOfLucian": true
+                }
+              },
+              "endsBook": false,
+              "nextSceneId": "b1_c1_s3"
+            },
+            "c2a_stand_ground": {
+              "condition": null,
+              "effects": {
+                "coinsChange": 15,
+                "relationshipChanges": {
+                  "lucian": 8
+                },
+                "setFlags": {
+                  "boldEntrance": true,
+                  "trustedLucian": true
+                }
+              },
+              "endsBook": false,
+              "nextSceneId": "b1_c1_s3"
+            }
+          }
+        },
+        "b1_c1_s2b": {
+          "chapterNumber": 1,
+          "choices": {
+            "c2b_step_back": {
+              "condition": null,
+              "effects": {
+                "relationshipChanges": {
+                  "isolde": 4
+                },
+                "setFlags": {
+                  "respectfulStudent": true
+                }
+              },
+              "endsBook": false,
+              "nextSceneId": "b1_c1_s3"
+            },
+            "c2b_translate_rune": {
+              "condition": null,
+              "effects": {
+                "coinsChange": 20,
+                "relationshipChanges": {
+                  "isolde": 9
+                },
+                "setFlags": {
+                  "decipheredRune": true,
+                  "respectedByIsolde": true
+                }
+              },
+              "endsBook": false,
+              "nextSceneId": "b1_c1_s3"
+            }
+          }
+        },
+        "b1_c1_s2c": {
+          "chapterNumber": 1,
+          "choices": {
+            "c2c_demand_truth": {
+              "condition": null,
+              "effects": {
+                "relationshipChanges": {
+                  "isolde": 2,
+                  "nico": 4
+                },
+                "setFlags": {
+                  "questionedNico": true
+                }
+              },
+              "endsBook": false,
+              "nextSceneId": "b1_c1_s3"
+            },
+            "c2c_stay_close": {
+              "condition": null,
+              "effects": {
+                "coinsChange": 15,
+                "relationshipChanges": {
+                  "nico": 8
+                },
+                "setFlags": {
+                  "closeToNico": true,
+                  "protectedByNico": true
+                }
+              },
+              "endsBook": false,
+              "nextSceneId": "b1_c1_s3"
+            }
+          }
+        },
+        "b1_c1_s3": {
+          "chapterNumber": 1,
+          "choices": {
+            "c3_alchemical_seal": {
+              "condition": null,
+              "effects": {
+                "coinsChange": 25,
+                "relationshipChanges": {
+                  "isolde": 9,
+                  "nico": 4
+                },
+                "setFlags": {
+                  "restoredWardOrder": true,
+                  "usedAlchemy": true
+                }
+              },
+              "endsBook": false,
+              "nextSceneId": "b1_c1_s4"
+            },
+            "c3_blood_resonance": {
+              "condition": null,
+              "effects": {
+                "coinsChange": 30,
+                "relationshipChanges": {
+                  "isolde": 5,
+                  "lucian": 8
+                },
+                "setFlags": {
+                  "knowsVampireSecret": true,
+                  "offeredBloodResonance": true
+                }
+              },
+              "endsBook": false,
+              "nextSceneId": "b1_c1_s4"
+            },
+            "c3_protect_nico": {
+              "condition": null,
+              "effects": {
+                "coinsChange": 20,
+                "relationshipChanges": {
+                  "lucian": 2,
+                  "nico": 9
+                },
+                "setFlags": {
+                  "memorizedSigil": true,
+                  "protectedNico": true
+                }
+              },
+              "endsBook": false,
+              "nextSceneId": "b1_c1_s4"
+            }
+          }
+        },
+        "b1_c1_s4": {
+          "chapterNumber": 1,
+          "choices": {
+            "c4_accept_token": {
+              "condition": null,
+              "effects": {
+                "achievementId": "FIRST_BLOOD",
+                "coinsChange": 50,
+                "relationshipChanges": {
+                  "lucian": 5
+                },
+                "setFlags": {
+                  "acceptedSignet": true,
+                  "completedChapter1": true
+                }
+              },
+              "endsBook": false,
+              "nextSceneId": "b1_c2_s1"
+            },
+            "c4_vow_independence": {
+              "condition": null,
+              "effects": {
+                "achievementId": "FIRST_BLOOD",
+                "coinsChange": 50,
+                "relationshipChanges": {
+                  "isolde": 5,
+                  "nico": 5
+                },
+                "setFlags": {
+                  "completedChapter1": true,
+                  "independentPath": true
+                }
+              },
+              "endsBook": false,
+              "nextSceneId": "b1_c2_s1"
+            }
+          }
+        },
+        "b1_c2_s1": {
+          "chapterNumber": 2,
+          "choices": {
+            "c2_1_crimson_mask": {
+              "condition": null,
+              "effects": {
+                "relationshipChanges": {
+                  "lucian": 5
+                },
+                "setFlags": {
+                  "woreCrimsonMask": true
+                }
+              },
+              "endsBook": false,
+              "nextSceneId": "b1_c2_s2"
+            },
+            "c2_1_midnight_mask": {
+              "condition": null,
+              "effects": {
+                "relationshipChanges": {
+                  "nico": 5
+                },
+                "setFlags": {
+                  "woreMidnightMask": true
+                }
+              },
+              "endsBook": false,
+              "nextSceneId": "b1_c2_s2"
+            },
+            "c2_1_silver_mask": {
+              "condition": null,
+              "effects": {
+                "relationshipChanges": {
+                  "isolde": 5
+                },
+                "setFlags": {
+                  "woreSilverMask": true
+                }
+              },
+              "endsBook": false,
+              "nextSceneId": "b1_c2_s2"
+            }
+          }
+        },
+        "b1_c2_s2": {
+          "chapterNumber": 2,
+          "choices": {
+            "c2_2_dance_lucian": {
+              "condition": null,
+              "effects": {
+                "achievementId": "DANGEROUS_LIAISON",
+                "relationshipChanges": {
+                  "lucian": 10
+                },
+                "setFlags": {
+                  "dancedWithLucian": true
+                }
+              },
+              "endsBook": false,
+              "nextSceneId": "b1_c2_s3"
+            },
+            "c2_2_intercept_nico": {
+              "condition": null,
+              "effects": {
+                "relationshipChanges": {
+                  "nico": 8
+                },
+                "setFlags": {
+                  "investigatedWithNico": true
+                }
+              },
+              "endsBook": false,
+              "nextSceneId": "b1_c2_s3"
+            },
+            "c2_2_slip_to_isolde": {
+              "condition": null,
+              "effects": {
+                "relationshipChanges": {
+                  "isolde": 8
+                },
+                "setFlags": {
+                  "joinedIsoldeOnTerrace": true
+                }
+              },
+              "endsBook": false,
+              "nextSceneId": "b1_c2_s3"
+            }
+          }
+        },
+        "b1_c2_s3": {
+          "chapterNumber": 2,
+          "choices": {
+            "c2_3_expose_traitor": {
+              "condition": null,
+              "effects": {
+                "coinsChange": 35,
+                "relationshipChanges": {
+                  "isolde": 6,
+                  "lucian": 6
+                },
+                "setFlags": {
+                  "exposedConspiracy": true
+                }
+              },
+              "endsBook": false,
+              "nextSceneId": "b1_c2_s4"
+            },
+            "c2_3_quiet_swap": {
+              "condition": null,
+              "effects": {
+                "coinsChange": 30,
+                "relationshipChanges": {
+                  "isolde": 8,
+                  "nico": 5
+                },
+                "setFlags": {
+                  "hasPoisonVial": true,
+                  "preservedEvidence": true
+                }
+              },
+              "endsBook": false,
+              "nextSceneId": "b1_c2_s4"
+            }
+          }
+        },
+        "b1_c2_s4": {
+          "chapterNumber": 2,
+          "choices": {
+            "c2_4_embrace_destiny": {
+              "condition": null,
+              "effects": {
+                "achievementId": "SECRET_KEEPER",
+                "coinsChange": 60,
+                "relationshipChanges": {
+                  "isolde": 5,
+                  "lucian": 5,
+                  "nico": 5
+                },
+                "setFlags": {
+                  "completedChapter2": true
+                }
+              },
+              "endsBook": false,
+              "nextSceneId": "b1_c3_s1"
+            }
+          }
+        },
+        "b1_c3_s1": {
+          "chapterNumber": 3,
+          "choices": {
+            "c3_1_flank_underground": {
+              "condition": null,
+              "effects": {
+                "coinsChange": 35,
+                "relationshipChanges": {
+                  "isolde": 8,
+                  "nico": 6
+                },
+                "setFlags": {
+                  "flakedCatacombs": true
+                }
+              },
+              "endsBook": false,
+              "nextSceneId": "b1_c3_s2"
+            },
+            "c3_1_lead_charge": {
+              "condition": null,
+              "effects": {
+                "coinsChange": 30,
+                "relationshipChanges": {
+                  "isolde": 6,
+                  "lucian": 6,
+                  "nico": 6
+                },
+                "setFlags": {
+                  "unifiedLeadership": true
+                }
+              },
+              "endsBook": false,
+              "nextSceneId": "b1_c3_s2"
+            }
+          }
+        },
+        "b1_c3_s2": {
+          "chapterNumber": 3,
+          "choices": {
+            "c3_2_alchemical_balance": {
+              "condition": null,
+              "effects": {
+                "achievementId": "SHADOW_SOVEREIGN",
+                "relationshipChanges": {
+                  "isolde": 15,
+                  "lucian": 5
+                },
+                "setFlags": {
+                  "chosenPartner": "isolde",
+                  "preservedBalance": true
+                }
+              },
+              "endsBook": false,
+              "nextSceneId": "b1_c3_s3"
+            },
+            "c3_2_mortal_defiance": {
+              "condition": null,
+              "effects": {
+                "achievementId": "SHADOW_SOVEREIGN",
+                "relationshipChanges": {
+                  "lucian": -2,
+                  "nico": 15
+                },
+                "setFlags": {
+                  "chosenPartner": "nico",
+                  "mortalReformation": true
+                }
+              },
+              "endsBook": false,
+              "nextSceneId": "b1_c3_s3"
+            },
+            "c3_2_vampire_embrace": {
+              "condition": null,
+              "effects": {
+                "achievementId": "SHADOW_SOVEREIGN",
+                "relationshipChanges": {
+                  "lucian": 15,
+                  "nico": -2
+                },
+                "setFlags": {
+                  "ascendedNocturneSovereign": true,
+                  "chosenPartner": "lucian"
+                }
+              },
+              "endsBook": false,
+              "nextSceneId": "b1_c3_s3"
+            }
+          }
+        },
+        "b1_c3_s3": {
+          "chapterNumber": 3,
+          "choices": {
+            "c3_3_conclude_book1": {
+              "condition": null,
+              "effects": {
+                "coinsChange": 100,
+                "setFlags": {
+                  "completedBook1": true
+                }
+              },
+              "endsBook": true,
+              "nextSceneId": "b1_c3_s3"
+            }
+          }
+        }
+      },
+      "startingSceneId": "b1_c1_s1",
+      "version": 1
+    }
+  },
+  "characters": {
+    "isolde": 45,
+    "lucian": 50,
+    "marcella": 35,
+    "nico": 50
+  },
+  "contentSchemaVersion": 1,
+  "knownAchievements": [
+    "THE_STORY_BEGINS",
+    "FIRST_CHOICE",
+    "SECRET_KEEPER",
+    "FIRST_BLOOD",
+    "DANGEROUS_LIAISON",
+    "SHADOW_SOVEREIGN"
+  ],
+  "rules": {
+    "affinityMax": 100,
+    "affinityMin": 0,
+    "coinsMin": 0,
+    "derivedAchievements": [
+      {
+        "id": "DANGEROUS_LIAISON",
+        "scope": "any",
+        "threshold": 70,
+        "type": "affinityThreshold"
+      }
+    ],
+    "lifecycleEvents": {
+      "character_created": {
+        "achievementId": "THE_STORY_BEGINS"
+      }
+    }
+  }
+}

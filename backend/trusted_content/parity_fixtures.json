@@ -1,0 +1,138 @@
+[
+  {
+    "book": "book1",
+    "startCoins": 0,
+    "steps": [
+      {
+        "achievements": [
+          "THE_STORY_BEGINS"
+        ],
+        "coins": 0,
+        "event": "character_created"
+      },
+      {
+        "achievements": [
+          "FIRST_CHOICE",
+          "THE_STORY_BEGINS"
+        ],
+        "coins": 0,
+        "event": "c1_pursue_shadow",
+        "fromScene": "b1_c1_s1"
+      },
+      {
+        "achievements": [
+          "FIRST_CHOICE",
+          "THE_STORY_BEGINS"
+        ],
+        "coins": 15,
+        "event": "c2a_stand_ground",
+        "fromScene": "b1_c1_s2a"
+      },
+      {
+        "achievements": [
+          "DANGEROUS_LIAISON",
+          "FIRST_CHOICE",
+          "THE_STORY_BEGINS"
+        ],
+        "coins": 45,
+        "event": "c3_blood_resonance",
+        "fromScene": "b1_c1_s3"
+      },
+      {
+        "achievements": [
+          "DANGEROUS_LIAISON",
+          "FIRST_BLOOD",
+          "FIRST_CHOICE",
+          "THE_STORY_BEGINS"
+        ],
+        "coins": 95,
+        "event": "c4_accept_token",
+        "fromScene": "b1_c1_s4"
+      },
+      {
+        "achievements": [
+          "DANGEROUS_LIAISON",
+          "FIRST_BLOOD",
+          "FIRST_CHOICE",
+          "THE_STORY_BEGINS"
+        ],
+        "coins": 95,
+        "event": "c2_1_crimson_mask",
+        "fromScene": "b1_c2_s1"
+      },
+      {
+        "achievements": [
+          "DANGEROUS_LIAISON",
+          "FIRST_BLOOD",
+          "FIRST_CHOICE",
+          "THE_STORY_BEGINS"
+        ],
+        "coins": 95,
+        "event": "c2_2_dance_lucian",
+        "fromScene": "b1_c2_s2"
+      },
+      {
+        "achievements": [
+          "DANGEROUS_LIAISON",
+          "FIRST_BLOOD",
+          "FIRST_CHOICE",
+          "THE_STORY_BEGINS"
+        ],
+        "coins": 130,
+        "event": "c2_3_expose_traitor",
+        "fromScene": "b1_c2_s3"
+      },
+      {
+        "achievements": [
+          "DANGEROUS_LIAISON",
+          "FIRST_BLOOD",
+          "FIRST_CHOICE",
+          "SECRET_KEEPER",
+          "THE_STORY_BEGINS"
+        ],
+        "coins": 190,
+        "event": "c2_4_embrace_destiny",
+        "fromScene": "b1_c2_s4"
+      },
+      {
+        "achievements": [
+          "DANGEROUS_LIAISON",
+          "FIRST_BLOOD",
+          "FIRST_CHOICE",
+          "SECRET_KEEPER",
+          "THE_STORY_BEGINS"
+        ],
+        "coins": 220,
+        "event": "c3_1_lead_charge",
+        "fromScene": "b1_c3_s1"
+      },
+      {
+        "achievements": [
+          "DANGEROUS_LIAISON",
+          "FIRST_BLOOD",
+          "FIRST_CHOICE",
+          "SECRET_KEEPER",
+          "SHADOW_SOVEREIGN",
+          "THE_STORY_BEGINS"
+        ],
+        "coins": 220,
+        "event": "c3_2_vampire_embrace",
+        "fromScene": "b1_c3_s2"
+      },
+      {
+        "achievements": [
+          "DANGEROUS_LIAISON",
+          "FIRST_BLOOD",
+          "FIRST_CHOICE",
+          "SECRET_KEEPER",
+          "SHADOW_SOVEREIGN",
+          "THE_STORY_BEGINS"
+        ],
+        "coins": 320,
+        "event": "c3_3_conclude_book1",
+        "fromScene": "b1_c3_s3"
+      }
+    ],
+    "version": 1
+  }
+]
