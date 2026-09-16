@@ -36,6 +36,12 @@ def prepare_nonterminal_choice(
         raise CheckpointConflict("progression revision changed")
     if event.bookId != checkpoint["bookId"] or event.fromSceneId != checkpoint["currentSceneId"]:
         raise CheckpointConflict("choice does not match durable checkpoint")
+    confirmed = ledger["coins"]["confirmed"]
+    derived_coins = ledger["derived"]["coins"]
+    if (isinstance(confirmed, bool) or not isinstance(confirmed, int) or confirmed < 0
+            or isinstance(derived_coins, bool) or not isinstance(derived_coins, int)
+            or derived_coins != confirmed):
+        raise CheckpointConflict("confirmed and derived coin balances disagree")
 
     book = book_entry(registry, event.bookId, event.contentVersion)
     derived = deepcopy(ledger["derived"])
