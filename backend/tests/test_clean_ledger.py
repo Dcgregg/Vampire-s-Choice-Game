@@ -19,7 +19,8 @@ def seed():
             "achievements": {}, "derived": new_state(content),
             "checkpoint": {"bookId": "book1", "contentVersion": 1,
                            "currentSceneId": "start", "terminal": False},
-            "openingGranted": False, "lifecycleApplied": []}
+            "openingGranted": False, "lifecycleApplied": [],
+            "appliedEventIds": {}}
 
 
 def test_clean_seed_is_accepted_without_mutation():
@@ -34,6 +35,10 @@ def test_clean_seed_is_accepted_without_mutation():
     lambda s: s.update(ownerId="spoofed"),
     lambda s: s.update(progressionRevision=True),
     lambda s: s.update(progressionRevision=1),
+    lambda s: s.pop("appliedEventIds"),
+    lambda s: s.update(appliedEventIds=None),
+    lambda s: s.update(appliedEventIds=[]),
+    lambda s: s.update(appliedEventIds={"1": "untrusted-event"}),
     lambda s: s.update(openingGranted=True),
     lambda s: s.update(lifecycleApplied=["first"]),
     lambda s: s.update(coins={"confirmed": 100}),
