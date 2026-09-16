@@ -81,6 +81,19 @@ def test_rejects_wrong_revision_checkpoint_or_fence_without_mutation(event_chang
     assert current == before
 
 
+@pytest.mark.parametrize("confirmed,derived", [
+    (20, 21), (21, 20), (-1, -1), (True, True), (20.0, 20), (20, "20"),
+])
+def test_rejects_inconsistent_coin_projection_without_mutation(confirmed, derived):
+    current = ledger()
+    current["coins"]["confirmed"] = confirmed
+    current["derived"]["coins"] = derived
+    before = deepcopy(current)
+    with pytest.raises(CheckpointConflict, match="coin balances"):
+        prepare_nonterminal_choice(registry(), current, event())
+    assert current == before
+
+
 @pytest.mark.parametrize("choice_id,exception", [
     ("award", CheckpointConflict), ("affinity_award", CheckpointConflict),
     ("terminal", CheckpointConflict), ("missing", InvalidChoice),
