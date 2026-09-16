@@ -43,6 +43,7 @@ async def test_matching_marker_finalises_and_retries_without_second_write(collec
     first = await finalise_attributed_event(ledgers, events, event=event, payload_hash="digest")
     second = await finalise_attributed_event(ledgers, events, event=event, payload_hash="digest")
     assert first["status"] == second["status"] == "applied"
+    assert first["resultRevision"] == second["resultRevision"] == 1
     assert first["appliedAt"] == second["appliedAt"]
     assert (await ledgers.find_one({"_id": event["ledgerId"]}))["progressionRevision"] == 1
 
@@ -74,3 +75,19 @@ async def test_tampered_event_or_payload_fails_closed(collections):
     with pytest.raises(AttributionUnproven):
         await finalise_attributed_event(ledgers, events, event=event, payload_hash="different")
     assert (await events.find_one({"_id": event["_id"]}))["status"] == "committing"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("result_revision", [None, 0, 2, True])
+async def test_applied_retry_rejects_missing_or_inconsistent_result_revision(collections, result_revision):
+    ledgers, events = collections
+    event = await seed(ledgers, events)
+    fields = {"status": "applied"}
+    if result_revision is not None:
+        fields["resultRevision"] = result_revision
+    await events.update_one({"_id": event["_id"]}, {"$set": fields})
+    with pytest.raises(AttributionUnproven, match="result revision"):
+        await finalise_attributed_event(ledgers, events, event=event, payload_hash="digest")
+    stored = await events.find_one({"_id": event["_id"]})
+    assert stored["status"] == "applied"
+    assert stored.get("resultRevision") == result_revision
