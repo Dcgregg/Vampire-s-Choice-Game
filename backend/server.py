@@ -22,6 +22,7 @@ from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depend
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from motor.motor_asyncio import AsyncIOMotorClient
+from pymongo.errors import DuplicateKeyError
 from pydantic import BaseModel, ConfigDict, Field
 import uuid
 
@@ -72,6 +73,16 @@ app.add_middleware(
 )
 
 api = APIRouter(prefix="/api")
+
+
+@app.on_event("startup")
+async def _ensure_indexes():
+    # Unique keys turn concurrent "create" races into duplicate-key errors we can
+    # translate into a clean 409 instead of silently storing two rival documents.
+    await saves.create_index("playerId", unique=True)
+    await account_saves.create_index("userId", unique=True)
+    await sessions.create_index("session_token", unique=True)
+    await users.create_index("email", unique=True)
 
 
 # ---- Validation models (structure-only; nested detail stays flexible) ----
@@ -167,10 +178,10 @@ async def put_save(player_id: str, payload: SavePayload):
 
     if existing is None:
         # Creating: client must not claim a base revision that never existed.
-        if payload.baseRevision not in (0,):
-            raise HTTPException(
+        if payload.baseRevision != 0:
+            return JSONResponse(
                 status_code=409,
-                detail={"error": "revision_conflict", "reason": "no_server_save", "currentSave": None},
+                content={"error": "revision_conflict", "reason": "no_server_save", "currentSave": None},
             )
         doc = {
             "playerId": player_id,
@@ -181,7 +192,11 @@ async def put_save(player_id: str, payload: SavePayload):
             "createdAt": now,
             "updatedAt": now,
         }
-        await saves.insert_one(doc)
+        try:
+            await saves.insert_one(doc)
+        except DuplicateKeyError:
+            # A concurrent create won the race — surface the real current save.
+            return await _anon_conflict(player_id)
         return _public(doc)
 
     # Optimistic concurrency: only accept if the client is up to date.
@@ -192,8 +207,8 @@ async def put_save(player_id: str, payload: SavePayload):
         )
 
     new_rev = existing["revision"] + 1
-    await saves.update_one(
-        {"playerId": player_id, "revision": existing["revision"]},
+    result = await saves.update_one(
+        {"playerId": player_id, "revision": existing["revision"], "claimedBy": {"$exists": False}},
         {"$set": {
             "saveSchemaVersion": payload.saveSchemaVersion,
             "contentVersions": payload.contentVersions,
@@ -202,14 +217,27 @@ async def put_save(player_id: str, payload: SavePayload):
             "updatedAt": now,
         }},
     )
-    existing.update({
-        "saveSchemaVersion": payload.saveSchemaVersion,
-        "contentVersions": payload.contentVersions,
-        "playerState": state_dict,
-        "revision": new_rev,
-        "updatedAt": now,
+    if result.matched_count == 0:
+        # The revision moved (or the save was claimed) between our read and write.
+        return await _anon_conflict(player_id)
+    updated = {**existing,
+               "saveSchemaVersion": payload.saveSchemaVersion,
+               "contentVersions": payload.contentVersions,
+               "playerState": state_dict,
+               "revision": new_rev,
+               "updatedAt": now}
+    return _public(updated)
+
+
+async def _anon_conflict(player_id: str) -> JSONResponse:
+    """Build the truthful 409 for a lost anonymous write (never a fake revision)."""
+    latest = await saves.find_one({"playerId": player_id})
+    if latest and latest.get("claimedBy"):
+        return JSONResponse(status_code=409, content={"error": "claimed", "reason": "use_account_endpoints"})
+    return JSONResponse(status_code=409, content={
+        "error": "revision_conflict", "reason": "stale_revision",
+        "currentSave": _public(latest) if latest else None,
     })
-    return _public(existing)
 
 
 # ===================== Authentication (Emergent Google) =====================
@@ -336,22 +364,35 @@ async def put_my_save(request: Request, payload: SavePayload):
     state_dict = payload.playerState.model_dump()
     now = _now()
     if existing is None:
-        if payload.baseRevision not in (0,):
+        if payload.baseRevision != 0:
             return JSONResponse(status_code=409, content={"error": "revision_conflict", "reason": "no_server_save", "currentSave": None})
         doc = {"userId": uid, "saveSchemaVersion": payload.saveSchemaVersion,
                "contentVersions": payload.contentVersions, "playerState": state_dict,
                "revision": 1, "createdAt": now, "updatedAt": now}
-        await account_saves.insert_one(doc)
+        try:
+            await account_saves.insert_one(doc)
+        except DuplicateKeyError:
+            return await _account_conflict(uid)
         return _public_account(doc)
     if payload.baseRevision != existing["revision"]:
         return JSONResponse(status_code=409, content={"error": "revision_conflict", "reason": "stale_revision", "currentSave": _public_account(existing)})
     new_rev = existing["revision"] + 1
-    await account_saves.update_one({"userId": uid, "revision": existing["revision"]},
+    result = await account_saves.update_one({"userId": uid, "revision": existing["revision"]},
         {"$set": {"saveSchemaVersion": payload.saveSchemaVersion, "contentVersions": payload.contentVersions,
                   "playerState": state_dict, "revision": new_rev, "updatedAt": now}})
-    existing.update({"saveSchemaVersion": payload.saveSchemaVersion, "contentVersions": payload.contentVersions,
-                     "playerState": state_dict, "revision": new_rev, "updatedAt": now})
-    return _public_account(existing)
+    if result.matched_count == 0:
+        return await _account_conflict(uid)
+    updated = {**existing, "saveSchemaVersion": payload.saveSchemaVersion, "contentVersions": payload.contentVersions,
+               "playerState": state_dict, "revision": new_rev, "updatedAt": now}
+    return _public_account(updated)
+
+
+async def _account_conflict(uid: str) -> JSONResponse:
+    latest = await account_saves.find_one({"userId": uid})
+    return JSONResponse(status_code=409, content={
+        "error": "revision_conflict", "reason": "stale_revision",
+        "currentSave": _public_account(latest) if latest else None,
+    })
 
 
 # ===================== Claim / link anonymous progress =====================
@@ -367,20 +408,21 @@ async def claim_save(request: Request, body: ClaimRequest):
     if not PLAYER_ID_RE.match(body.playerId):
         raise HTTPException(status_code=400, detail={"error": "invalid_player_id"})
 
+    now = _now()
     anon = await saves.find_one({"playerId": body.playerId})
     account = await account_saves.find_one({"userId": uid})
-    now = _now()
 
     # An anonymous save already claimed by someone else cannot be hijacked.
     if anon and anon.get("claimedBy") and anon["claimedBy"] != uid:
         raise HTTPException(status_code=403, detail={"error": "already_claimed"})
 
-    # Nothing to claim and no account save.
     if not anon and not account:
         raise HTTPException(status_code=404, detail={"error": "nothing_to_claim"})
 
-    # Account already has a save AND a meaningful anonymous save exists -> need a choice.
-    if anon and account and not anon.get("claimedBy") and not body.strategy:
+    unclaimed_anon = bool(anon and not anon.get("claimedBy"))
+
+    # A fresh anonymous save AND an existing account save both exist -> user must choose.
+    if unclaimed_anon and account and not body.strategy:
         return JSONResponse(status_code=409, content={
             "error": "claim_conflict",
             "accountSave": _public_account(account),
@@ -389,35 +431,63 @@ async def claim_save(request: Request, body: ClaimRequest):
                               "saveSchemaVersion": anon["saveSchemaVersion"]},
         })
 
+    async def _guard_anon() -> bool:
+        """Atomically stamp the anon save as ours iff it's unclaimed or already ours.
+        Returns False only when another user owns it (=> 403)."""
+        if not anon:
+            return True
+        res = await saves.update_one(
+            {"playerId": body.playerId, "$or": [{"claimedBy": {"$exists": False}}, {"claimedBy": uid}]},
+            {"$set": {"claimedBy": uid, "updatedAt": now}},
+        )
+        if res.matched_count == 1:
+            return True
+        latest = await saves.find_one({"playerId": body.playerId})
+        return bool(latest and latest.get("claimedBy") == uid)
+
     def account_from_anon(a):
         return {"userId": uid, "historicalAnonymousId": a["playerId"],
                 "saveSchemaVersion": a["saveSchemaVersion"], "contentVersions": a.get("contentVersions", {}),
                 "playerState": a["playerState"], "revision": 1, "createdAt": now, "updatedAt": now}
 
+    # --- Adopt anon into a NEW account save (also the recovery path for an
+    #     interrupted claim where anon is already ours but no account exists). ---
     if anon and not account:
-        # Atomic-ish create from anonymous; mark anonymous claimed so old id can't reuse it.
-        doc = account_from_anon(anon)
-        await account_saves.update_one({"userId": uid}, {"$setOnInsert": doc}, upsert=True)
-        await saves.update_one({"playerId": body.playerId}, {"$set": {"claimedBy": uid, "updatedAt": now}})
+        if not await _guard_anon():
+            raise HTTPException(status_code=403, detail={"error": "already_claimed"})
+        # $setOnInsert makes this a no-op if a concurrent request already created it.
+        await account_saves.update_one({"userId": uid}, {"$setOnInsert": account_from_anon(anon)}, upsert=True)
         result = await account_saves.find_one({"userId": uid})
         return _public_account(result)
 
+    # --- Explicit "keep this device's progress": overwrite account with anon,
+    #     but never clobber a concurrently-updated account save. ---
     if anon and account and body.strategy == "use_anonymous":
+        if not await _guard_anon():
+            raise HTTPException(status_code=403, detail={"error": "already_claimed"})
         new_rev = account["revision"] + 1
-        await account_saves.update_one({"userId": uid}, {"$set": {
-            "saveSchemaVersion": anon["saveSchemaVersion"], "contentVersions": anon.get("contentVersions", {}),
-            "playerState": anon["playerState"], "historicalAnonymousId": anon["playerId"],
-            "revision": new_rev, "updatedAt": now}})
-        await saves.update_one({"playerId": body.playerId}, {"$set": {"claimedBy": uid, "updatedAt": now}})
+        res = await account_saves.update_one(
+            {"userId": uid, "revision": account["revision"]},
+            {"$set": {"saveSchemaVersion": anon["saveSchemaVersion"], "contentVersions": anon.get("contentVersions", {}),
+                      "playerState": anon["playerState"], "historicalAnonymousId": anon["playerId"],
+                      "revision": new_rev, "updatedAt": now}},
+        )
+        if res.matched_count == 0:
+            latest = await account_saves.find_one({"userId": uid})
+            return JSONResponse(status_code=409, content={
+                "error": "revision_conflict", "reason": "account_changed",
+                "currentSave": _public_account(latest) if latest else None,
+            })
         result = await account_saves.find_one({"userId": uid})
         return _public_account(result)
 
-    # use_account (explicit) OR anon already claimed by this user (idempotent) OR account-only.
-    if anon and not anon.get("claimedBy"):
-        await saves.update_one({"playerId": body.playerId}, {"$set": {"claimedBy": uid, "updatedAt": now}})
-    if account:
-        return _public_account(account)
+    # --- use_account, idempotent re-claim, or account-only: just fence the anon
+    #     save (so the old device can't keep writing) and return the account save. ---
+    if not await _guard_anon():
+        raise HTTPException(status_code=403, detail={"error": "already_claimed"})
     result = await account_saves.find_one({"userId": uid})
+    if not result:
+        raise HTTPException(status_code=404, detail={"error": "nothing_to_claim"})
     return _public_account(result)
 
 

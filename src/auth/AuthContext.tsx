@@ -6,13 +6,18 @@ import {
 } from '../sync/cloudClient';
 
 interface ClaimConflict { accountSave: CloudSave; anonymousSave: any; playerId: string; }
+type LinkError = 'link_failed' | 'resolve_failed';
 interface AuthState {
   user: PublicUser | null;
   loading: boolean;
   conflict: ClaimConflict | null;
+  error: LinkError | null;
+  resolving: boolean;
   login: () => void;
   logout: () => Promise<void>;
   resolveConflict: (strategy: 'use_account' | 'use_anonymous') => Promise<void>;
+  retryLink: () => Promise<void>;
+  dismissError: () => void;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -26,24 +31,61 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<PublicUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [conflict, setConflict] = useState<ClaimConflict | null>(null);
+  const [error, setError] = useState<LinkError | null>(null);
+  const [resolving, setResolving] = useState(false);
   const processed = useRef(false);
 
   const linkProgress = useCallback(async () => {
     const playerId = syncManager.getPlayerId();
-    const res = await claimSave(playerId);
-    if (res.ok) { syncManager.enterAccountMode(res.save); return; }
-    if ('conflict' in res && res.conflict) { setConflict({ accountSave: res.accountSave, anonymousSave: res.anonymousSave, playerId }); return; }
-    // Nothing to claim (no anon + no account) -> start a fresh account save from local.
-    const acct = await getAccountSave().catch(() => null);
-    syncManager.enterAccountMode(acct);
+    let res;
+    try {
+      res = await claimSave(playerId);
+    } catch {
+      // Backend unreachable: stay anonymous, keep local progress, surface the error.
+      setError('link_failed');
+      return;
+    }
+    if (res.ok) { setError(null); syncManager.enterAccountMode(res.save); return; }
+    if ('conflict' in res && res.conflict) {
+      setError(null);
+      setConflict({ accountSave: res.accountSave, anonymousSave: res.anonymousSave, playerId });
+      return;
+    }
+    // Genuinely nothing to claim (new signed-in user) -> start a fresh account save from local.
+    if (res.error === 'nothing_to_claim' || res.error === 'http_404') {
+      const acct = await getAccountSave().catch(() => null);
+      setError(null);
+      syncManager.enterAccountMode(acct);
+      return;
+    }
+    // Any other failure: DO NOT treat as a successful link. Remain anonymous.
+    setError('link_failed');
   }, []);
 
   const resolveConflict = useCallback(async (strategy: 'use_account' | 'use_anonymous') => {
-    if (!conflict) return;
-    const res = await claimSave(conflict.playerId, strategy);
-    if (res.ok) syncManager.enterAccountMode(res.save);
-    setConflict(null);
-  }, [conflict]);
+    if (!conflict || resolving) return;
+    setResolving(true);
+    let res;
+    try {
+      res = await claimSave(conflict.playerId, strategy);
+    } catch {
+      // Keep the dialog open so the user can retry; discard nothing.
+      setResolving(false);
+      setError('resolve_failed');
+      return;
+    }
+    setResolving(false);
+    if (res.ok) { setError(null); setConflict(null); syncManager.enterAccountMode(res.save); return; }
+    // Resolution failed (e.g. account changed concurrently): keep the dialog open.
+    setError('resolve_failed');
+  }, [conflict, resolving]);
+
+  const retryLink = useCallback(async () => {
+    setError(null);
+    await linkProgress();
+  }, [linkProgress]);
+
+  const dismissError = useCallback(() => setError(null), []);
 
   useEffect(() => {
     if (processed.current) return;
@@ -81,13 +123,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await logoutApi();
     syncManager.exitAccountMode();
     setUser(null);
+    setError(null);
+    setConflict(null);
   }, []);
 
   // Touch gameStateManager so the singleton (and its sync attach) is initialised.
   useEffect(() => { void gameStateManager.getState(); }, []);
 
   return (
-    <AuthContext.Provider value={{ user, loading, conflict, login, logout, resolveConflict }}>
+    <AuthContext.Provider value={{ user, loading, conflict, error, resolving, login, logout, resolveConflict, retryLink, dismissError }}>
       {children}
     </AuthContext.Provider>
   );
