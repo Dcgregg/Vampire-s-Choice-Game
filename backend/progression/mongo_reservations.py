@@ -177,9 +177,9 @@ class MongoReservationStore:
                     if fenced is None:
                         raise ReservationBusy("lease expired or ownership changed")
                     filt = {"_id": active["ledgerId"], "progressionRevision": base,
-                            "checkpoint.bookId": checkpoint["bookId"],
-                            "checkpoint.currentSceneId": checkpoint["currentSceneId"],
-                            "checkpoint.terminal": checkpoint["terminal"],
+                            # Compare the complete pinned checkpoint, not just
+                            # book/scene/terminal: a version change must fence.
+                            "checkpoint": dict(checkpoint),
                             "mergedInto": {"$exists": False}, "fencedAt": {"$exists": False},
                             "claimedBy": {"$exists": False}}
                     updated = await self.ledgers.find_one_and_update(
