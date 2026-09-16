@@ -28,8 +28,10 @@ def prepare_nonterminal_choice(
     if event.kind != "choice":
         raise CheckpointConflict("only ordinary choice events are supported")
     checkpoint = ledger["checkpoint"]
-    if ledger.get("fenced") or checkpoint.get("terminal"):
-        raise CheckpointConflict("ledger is fenced or checkpoint is terminal")
+    if (ledger.get("fenced") or ledger.get("mergedInto") is not None
+            or ledger.get("fencedAt") is not None or ledger.get("claimedBy") is not None
+            or checkpoint.get("terminal")):
+        raise CheckpointConflict("ledger is fenced, claimed or checkpoint is terminal")
     if event.baseProgressionRevision != ledger["progressionRevision"]:
         raise CheckpointConflict("progression revision changed")
     if event.bookId != checkpoint["bookId"] or event.fromSceneId != checkpoint["currentSceneId"]:
