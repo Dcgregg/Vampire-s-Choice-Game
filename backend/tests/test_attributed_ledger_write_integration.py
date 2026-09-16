@@ -87,3 +87,31 @@ async def test_missing_attribution_schema_fails_closed(ledger_collection):
     with pytest.raises(AttributionUnproven, match="CAS did not match"):
         await write(ledgers, event)
     assert (await ledgers.find_one({"_id": ledger_id}))["progressionRevision"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("history", [{}, {"1": ""}, {"1": None}, {"1": 7}])
+async def test_nonopening_write_rejects_missing_or_invalid_predecessor(ledger_collection, history):
+    ledgers = ledger_collection
+    ledger_id = await seed(ledgers)
+    await ledgers.update_one({"_id": ledger_id}, {"$set": {
+        "progressionRevision": 1, "appliedEventIds": history}})
+    event = {"ledgerId": ledger_id, "eventId": "second", "baseRevision": 1, "targetRevision": 2}
+    with pytest.raises(AttributionUnproven, match="CAS did not match"):
+        await write(ledgers, event)
+    current = await ledgers.find_one({"_id": ledger_id})
+    assert current["progressionRevision"] == 1
+    assert current["coins"]["confirmed"] == 0
+    assert current["appliedEventIds"] == history
+
+
+@pytest.mark.asyncio
+async def test_nonopening_write_retains_predecessor_marker(ledger_collection):
+    ledgers = ledger_collection
+    ledger_id = await seed(ledgers)
+    await ledgers.update_one({"_id": ledger_id}, {"$set": {
+        "progressionRevision": 1, "appliedEventIds.1": "first"}})
+    event = {"ledgerId": ledger_id, "eventId": "second", "baseRevision": 1, "targetRevision": 2}
+    result = await write(ledgers, event)
+    assert result["appliedEventIds"] == {"1": "first", "2": "second"}
+    assert result["progressionRevision"] == 2
