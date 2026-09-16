@@ -37,7 +37,8 @@ def clean_seed(registry: Mapping[str, Any], *, owner_id: str,
             "achievements": {}, "derived": new_state(registry),
             "checkpoint": {"bookId": book_id, "contentVersion": content_version,
                            "currentSceneId": scene_id, "terminal": False},
-            "openingGranted": False, "lifecycleApplied": []}
+            "openingGranted": False, "lifecycleApplied": [],
+            "appliedEventIds": {}}
     validate_clean_ledger(registry, seed, owner_id=owner_id)
     return seed
 
