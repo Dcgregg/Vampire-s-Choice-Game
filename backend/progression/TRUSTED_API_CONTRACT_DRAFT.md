@@ -24,9 +24,9 @@ Reject unknown fields at the trust boundary; impose explicit length, type, and s
 ## Proposed processing order
 
 1. Authenticate, derive account ownership, and load an account-owned trusted ledger. Do not use the client-controlled `account_saves.playerState` as an authoritative starting projection. Missing-ledger initialization and any import from legacy saves require a separate, explicitly approved policy.
-2. Validate the event shape and version against the server's pinned trusted-content registry. Validate the choice against the ledger's current checkpoint, including `fromSceneId`, and validate lifecycle eligibility against a documented server-side state machine. Existence in the registry alone is insufficient proof that an event is reachable or eligible.
-3. Resolve a previously recorded `(owner, eventId)` first: return the durable applied result for an identical payload; reject a payload mismatch; reconcile an in-flight reservation without double-awarding. An event previously rejected must not become a new award by reusing its ID.
-4. Require `baseProgressionRevision` to match the ledger's authoritative revision for a new event. Derive effects and next projection server-side with the trusted reducer; never trust the browser's coin balance, achievements, flags, affinities, or next checkpoint.
+2. Strictly parse the event's shape, bounded fields, and canonical payload for deduplication. This is **not** current-state eligibility validation: do not yet reject a previously applied event merely because its historical base revision, source checkpoint, or content version differs from today's ledger state. The exact event-ID scope, canonical encoding, and treatment of previously rejected events still require approval.
+3. Resolve a previously recorded `(owner, eventId)` against its durable canonical payload **before** checking the new-event base revision or current checkpoint: return the durable applied result for an identical payload; reject a payload mismatch; reconcile an in-flight reservation without double-awarding. A previously rejected event must not become a new award by reusing its ID. Do not infer success from an unresolved reservation.
+4. Only for an unclaimed **new** event, validate its content version against the ledger's durable trusted-content pin, check choice reachability from the current checkpoint, and enforce separately documented lifecycle eligibility. Registry existence alone does not prove the ledger is pinned to that version or that an event is reachable or eligible. Require `baseProgressionRevision` to match the authoritative ledger revision. Derive effects and the next projection server-side with the trusted reducer; never trust the browser's coin balance, achievements, flags, affinities, or next checkpoint.
 5. Reserve and commit through the transaction-backed adapter with its conditional revision/checkpoint guards. Persist the event outcome and ledger mutation atomically; do not introduce a second progression-revision writer. On an ambiguous transaction failure, report an indeterminate/retryable outcome without claiming success and reconcile durable state before a retry.
 6. Return only a server-derived public ledger and event result. Do not expose Mongo IDs, session tokens, internal lease ownership, or mutable reservation details.
 
@@ -44,8 +44,8 @@ These codes are **proposed**, not current behavior. Existing `EventResult` permi
 ## Pre-implementation acceptance tests
 
 - Unauthenticated request, another user's ledger ID, and anonymous player-ID spoofing cannot award or read account progression.
-- Browser-supplied coins, achievements, projection, and extra fields cannot influence awards; invalid content versions, unreachable choices, and ineligible lifecycle events fail closed.
-- Exact duplicate returns the same durable result without increment; same event ID with changed payload conflicts.
+- Browser-supplied coins, achievements, projection, and extra fields cannot influence awards; invalid content versions, unreachable choices, and ineligible lifecycle events fail closed for **new** events.
+- Exact duplicate returns the same durable result without increment, even when its original base revision is now stale or its source scene is no longer current; same event ID with changed payload conflicts.
 - Concurrent distinct events at one base revision cannot both advance the ledger; stale checkpoint, stale lease owner, and ambiguous transaction outcomes do not double-award.
 - Legacy cloud-save edits and claims cannot mutate the trusted ledger or bypass its revision owner; migration/import policy is separately tested and approved.
 - Errors never claim success before durable commit; recovery and observability follow `RECOVERY_FAILURE_POLICY.md`.
