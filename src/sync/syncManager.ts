@@ -7,13 +7,17 @@ const META_KEY = 'vc_sync_meta';
 export type SyncStatus = 'idle' | 'syncing' | 'synced' | 'offline' | 'conflict' | 'error';
 type Mode = 'anonymous' | 'account';
 
+/** An unsynced local save that lost a revision race with the server on PUSH.
+ *  Both versions are held so the player can choose which to keep. */
+export interface PushConflict { local: PlayerState; cloud: CloudSave; }
+
 interface Attachment {
   getState: () => PlayerState;
   applyCloudState: (state: PlayerState) => void;
   migrate: (rawPlayerState: any) => PlayerState;
 }
 
-class SyncManager {
+export class SyncManager {
   private playerId = '';
   private cloudRevision = 0;
   private lastSyncedJson = '';
@@ -22,6 +26,9 @@ class SyncManager {
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private attached: Attachment | null = null;
   private listeners = new Set<(s: SyncStatus) => void>();
+  private pushConflict: PushConflict | null = null;
+  private conflictListeners = new Set<(c: PushConflict | null) => void>();
+  private resolving = false;
   public status: SyncStatus = 'idle';
 
   attach(a: Attachment): void {
@@ -39,6 +46,22 @@ class SyncManager {
     return () => this.listeners.delete(l);
   }
   private setStatus(s: SyncStatus): void { this.status = s; this.listeners.forEach((l) => l(s)); }
+
+  /** Subscribe to outstanding PUSH conflicts (both local + cloud preserved). */
+  subscribeConflict(l: (c: PushConflict | null) => void): () => void {
+    this.conflictListeners.add(l);
+    l(this.pushConflict);
+    return () => this.conflictListeners.delete(l);
+  }
+  getPushConflict(): PushConflict | null { return this.pushConflict; }
+  private setConflict(c: PushConflict | null): void {
+    this.pushConflict = c;
+    this.conflictListeners.forEach((l) => l(c));
+  }
+  private cancelTimers(): void {
+    if (this.debounce) { clearTimeout(this.debounce); this.debounce = null; }
+    if (this.retryTimer) { clearTimeout(this.retryTimer); this.retryTimer = null; }
+  }
 
   private loadMeta(): void {
     try {
@@ -82,15 +105,25 @@ class SyncManager {
     this.mode = 'anonymous';
     this.cloudRevision = 0;
     this.lastSyncedJson = '';
+    this.setConflict(null);
     this.setStatus('idle');
   }
 
   recordLocalSave(): void { this.scheduleSync(); }
-  private scheduleSync(delay = 1200): void { if (this.debounce) clearTimeout(this.debounce); this.debounce = setTimeout(() => void this.push(), delay); }
-  private scheduleRetry(delay = 5000): void { if (this.retryTimer) clearTimeout(this.retryTimer); this.retryTimer = setTimeout(() => void this.push(), delay); }
+  private scheduleSync(delay = 1200): void {
+    if (this.pushConflict) return; // never auto-push while a conflict awaits the player
+    if (this.debounce) clearTimeout(this.debounce);
+    this.debounce = setTimeout(() => void this.push(), delay);
+  }
+  private scheduleRetry(delay = 5000): void {
+    if (this.pushConflict) return;
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = setTimeout(() => void this.push(), delay);
+  }
 
   async push(): Promise<void> {
     if (!this.attached) return;
+    if (this.pushConflict) return; // block auto-push until the player resolves it
     const state = this.attached.getState();
     if (!state.player) return;
     const json = JSON.stringify(state);
@@ -104,8 +137,63 @@ class SyncManager {
         return;
       }
       const current = res.currentSave;
-      if (current) { this.setStatus('conflict'); this.adopt(current); } else { this.setStatus('error'); }
+      if (current) {
+        // The server revision advanced. NEVER discard the unsynced local save:
+        // preserve both and enter an explicit conflict for the player to resolve.
+        this.cancelTimers();
+        this.setConflict({ local: state, cloud: current });
+        this.setStatus('conflict');
+      } else {
+        this.setStatus('error');
+      }
     } catch { this.setStatus('offline'); this.scheduleRetry(); }
+  }
+
+  /**
+   * Resolve an outstanding PUSH conflict by explicit player choice.
+   *  - 'local': keep this device's progress; re-push it against the latest
+   *    cloud revision. Only marks synced once the server confirms.
+   *  - 'cloud': replace local with the cloud save (UI must confirm first).
+   * Returns true on success; on failure both saves are preserved and the
+   * conflict remains open so the player can retry.
+   */
+  async resolvePushConflict(choice: 'local' | 'cloud'): Promise<boolean> {
+    const conflict = this.pushConflict;
+    if (!conflict || this.resolving || !this.attached) return false;
+    this.resolving = true;
+    try {
+      if (choice === 'cloud') {
+        this.cloudRevision = conflict.cloud.revision;
+        this.setConflict(null);
+        this.adopt(conflict.cloud); // applies cloud, persists, sets synced
+        return true;
+      }
+      // keep device: re-push current local state at the latest known cloud revision.
+      this.setStatus('syncing');
+      const state = this.attached.getState();
+      const json = JSON.stringify(state);
+      const payload = { saveSchemaVersion: state.version, contentVersions: state.contentVersions || {}, playerState: state, baseRevision: conflict.cloud.revision };
+      const res = this.mode === 'account' ? await putAccountSave(payload) : await putSave(this.playerId, payload);
+      if (res.ok && res.save) {
+        this.cloudRevision = res.save.revision; this.lastSyncedJson = json; this.saveMeta();
+        this.setConflict(null); this.setStatus('synced');
+        return true;
+      }
+      if (res.currentSave) {
+        // Another writer advanced again: keep both, refresh the cloud snapshot.
+        this.setConflict({ local: state, cloud: res.currentSave });
+        this.setStatus('conflict');
+      } else {
+        this.setStatus('error');
+      }
+      return false;
+    } catch {
+      // Network/server failure: keep both versions, allow retry.
+      this.setStatus('offline');
+      return false;
+    } finally {
+      this.resolving = false;
+    }
   }
 }
 

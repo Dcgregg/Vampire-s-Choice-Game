@@ -1,0 +1,27 @@
+{
+  "summary": "Phase 5 HARDENING frontend E2E verified end-to-end. Anonymous flow: no login wall — landing shows #landing-begin-btn, [data-testid=sync-status-chip] ('Local save'), [data-testid=account-login-btn]; clicking Begin advances into character creation; anonymous vc_player_id persists in localStorage. Auth: injecting seeded httpOnly session_token cookie yields GET /api/auth/me=200 and AccountBar swaps to [data-testid=account-logout-btn]. Claim conflict: with an anonymous cloud_saves doc AND an account_saves doc for the seeded user, sign-in surfaces [data-testid=claim-conflict-modal] with cloud/local buttons. Resolve-failure hardening PASSES: intercepting POST /api/me/claim -> 500 during resolveConflict keeps the modal open, displays [data-testid=conflict-error-msg] ('We couldn't complete that…'), re-enables buttons, and does NOT drop user into account mode; unrouting + clicking cloud again cleanly resolves and closes modal (sync chip flips to 'Saved to cloud', account save adopted — Continue shows 'CloudAcct • Chapter 2', 999 coins). Link-failure hardening PASSES: with /api/me/claim forced to 500, page renders [data-testid=account-error-banner] with [data-testid=account-retry-link-btn] and [data-testid=account-dismiss-error-btn]; sync chip stays 'Local save' (user NOT prematurely switched to account mode). Dismiss hides banner; reload re-shows it; unroute + Retry recovers into account mode. All new recovery test-ids present in shipped bundle.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_auth.py",
+    "/app/backend/tests/test_saves.py",
+    "/app/backend/tests/test_concurrency.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Pre-existing benign console 404/401s on load (GET /api/auth/me before auth; GET /api/saves/{new_id} on fresh anon) — harmless, cloudClient handles gracefully.",
+    "Book 1 end-to-end completion (BookCompleteScreen) was not exercised in this iteration due to scope focus on hardening/recovery UI; iteration_5 covered Book 1 gameplay flows. Recommend keeping a scripted seed-state test to reach BookCompleteScreen if regression coverage is desired."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (skipped per request)", "frontend": "100%"},
+  "test_credentials": "Ephemeral session seeded in mongo db=vampires_choice per /app/memory/test_credentials.md; injected as httpOnly/secure/SameSite=None cookie 'session_token'. All test users (test.user.*) and test_session_* rows deleted after run; ephemeral cloud_saves doc for the seeded vc_ player also deleted.",
+  "seed_data_creation": "Seeded 1 user + session, 1 anon cloud_saves (vc_777524af4c96474aaffdce64db2279a6), 1 account_saves for the seeded user to force the claim conflict. All cleaned up post-run.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Preview URL: https://84917d5f-bab4-4eda-8134-1d87293b0dc7.preview.emergentagent.com. Vite app root=/app, backend at same-origin /api (:8001). Auth is Emergent Google; for automation seed a users+user_sessions doc directly in mongo (db=vampires_choice) and inject cookie {name:'session_token',httpOnly:true,secure:true,sameSite:'None'}. To trigger claim-conflict deterministically: (1) create a vc_* cloud_saves doc via PUT /api/saves/{pid}; (2) create an account_saves doc via PUT /api/me/save with Bearer <token>; (3) load app anonymously, override localStorage vc_player_id to the seeded pid, add cookie, reload. Use await page.goto(url, wait_until='domcontentloaded') — 'networkidle' hangs due to Vite HMR/SW keepalive. Use element.click() via page.evaluate to bypass gothic-overlay pointer interception. Verified data-testids all present: landing-begin-btn(id), sync-status-chip, account-login-btn, account-logout-btn, account-error-banner, account-retry-link-btn, account-dismiss-error-btn, claim-conflict-modal, conflict-use-cloud-btn, conflict-use-local-btn, conflict-error-msg.",
+  "rca of the issue": "N/A — Phase 5 hardening changes verified. AuthContext.linkProgress() correctly stays anonymous on link failure and surfaces error via AccountBar recovery banner; resolveConflict() correctly keeps modal open + sets error='resolve_failed' on failure; retry/dismiss operate as designed."
+}

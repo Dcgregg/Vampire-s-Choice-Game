@@ -37,6 +37,16 @@ Vite 6 + React 19 + TypeScript · Tailwind CSS v4 · vite-plugin-pwa · lucide-r
 - `dev-dist/` PWA artifacts are tracked (noise); consider gitignoring.
 - Duplicated reward metadata: `Chapter.rewardCoins`/`completionAchievementId` are now descriptive only (choice effects are authoritative).
 
+## Phase 5 Hardening pass (2026-09-16) — DONE, agent+test-agent verified, awaiting GitHub publish
+Corrective pass on Phase 5 auth/claim/concurrency (no new features; Phase 6 NOT started).
+Commit: `5fc70dd5809b97915fcdbed2510ff1cc7e3ef0d5`.
+- Backend `server.py`: `PUT /api/saves/{id}` & `PUT /api/me/save` verify update `matched_count` and return a truthful 409 (real current save, never a fabricated revision); duplicate-key create races → 409. Startup creates UNIQUE indexes: `cloud_saves.playerId`, `account_saves.userId` (+ `user_sessions.session_token`, `users.email`). `POST /api/me/claim` race-safe via atomic `_guard_anon()` conditional claim (two users can't both claim one anon save → loser 403), conditional account upserts that never clobber a newer account save, and interrupted-claim recovery.
+- Frontend: `AuthContext.linkProgress()` no longer enters account mode on a failed claim (stays anonymous, local intact, surfaces error); `resolveConflict()` keeps conflict modal open on failure + retry; `AccountBar` shows accessible error banner + Retry + dismiss and in-modal error, buttons disabled while resolving. Gothic style preserved.
+- Env: MongoDB is STANDALONE (no replica set) → no multi-doc transactions; used atomic conditional updates + unique indexes instead.
+- Tests: `backend/tests/test_concurrency.py` (NEW, threaded/genuinely concurrent) 6/6; existing 9/9 saves + 5/5 auth; frontend 74/74; tsc clean; prod build OK; testing-agent iteration_6 frontend 100%.
+- New test-ids: `account-error-banner`, `account-retry-link-btn`, `account-dismiss-error-btn`, `conflict-error-msg`.
+- Remaining risk: sync-manager PUSH conflict still auto-adopts cloud over unsynced local edits ("Synced (merged)") — left as-is per scope; revisit if user wants user-resolved push conflicts.
+
 ## Recommended phases (2 done; awaiting approval for 3)
 1. Stabilize + fix small bugs (streak, book-end loop, completedChapters), drop dead deps.
 2. **FIRST BUILD:** extract pure, tested Story Engine + enforce `choice.condition`; add zod content validation.
