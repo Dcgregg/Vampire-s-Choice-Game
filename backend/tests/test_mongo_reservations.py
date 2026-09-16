@@ -1,5 +1,4 @@
-"""Mock-level adapter tests. Real standalone Mongo crash/concurrency tests remain required."""
-from datetime import datetime, timedelta, timezone
+"""Mock-level adapter tests; real MongoDB tests live in integration suite."""
 from unittest.mock import AsyncMock
 
 import pytest
@@ -16,6 +15,15 @@ def store():
     return MongoReservationStore(AsyncMock(), AsyncMock())
 
 
+def checkpoint():
+    return {"bookId": "book1", "currentSceneId": "start", "terminal": False}
+
+
+def projection():
+    return {"coins": {"confirmed": 260}, "achievements": {}, "derived": {},
+            "checkpoint": {"bookId": "book1", "currentSceneId": "next", "terminal": False}}
+
+
 @pytest.mark.asyncio
 async def test_indexes_include_durable_unique_revision_reservation(store):
     await store.ensure_indexes()
@@ -30,12 +38,24 @@ async def test_indexes_include_durable_unique_revision_reservation(store):
 async def test_competing_reservation_cannot_remove_winner(store):
     store.events.find_one.return_value = {"_id": "loser", "ledgerId": "l", "eventId": "b",
                                           "payloadHash": "h", "status": "received"}
+    store.ledgers.find_one.return_value = {"progressionRevision": 0}
     store.events.find_one_and_update.side_effect = DuplicateKeyError("target taken")
     with pytest.raises(ProgressionConflict):
         await store.reserve(ledger_id="l", event_id="b", payload_hash="h",
                             base_revision=0, awards={})
     store.events.delete_one.assert_not_awaited()
     store.events.update_one.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_stale_reservation_rejected_before_target_claim(store):
+    store.events.find_one.return_value = {"_id": "e", "ledgerId": "l", "eventId": "e",
+                                          "payloadHash": "h", "status": "received"}
+    store.ledgers.find_one.return_value = {"progressionRevision": 1}
+    with pytest.raises(ProgressionConflict, match="revision changed"):
+        await store.reserve(ledger_id="l", event_id="e", payload_hash="h",
+                            base_revision=0, awards={})
+    store.events.find_one_and_update.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -50,30 +70,38 @@ async def test_reused_event_id_with_changed_payload_is_rejected(store):
 
 @pytest.mark.asyncio
 async def test_lease_takeover_requires_expiry(store):
-    event = {"_id": "e", "status": "committing"}
     store.events.find_one_and_update.return_value = None
     with pytest.raises(ReservationBusy):
-        await store.acquire(event)
+        await store.acquire({"_id": "e", "status": "committing"})
     filt = store.events.find_one_and_update.await_args.args[0]
     assert filt["leaseUntil"]["$lte"].tzinfo is not None
 
 
 @pytest.mark.asyncio
-async def test_commit_uses_single_conditional_ledger_write(store):
-    event = {"_id": "e", "ledgerId": "l", "status": "committing",
-             "leaseOwner": "worker", "baseRevision": 4, "targetRevision": 5}
+async def test_commit_uses_persisted_projection_in_single_conditional_write(store):
+    event = {"_id": "e", "ledgerId": "l", "status": "committing", "leaseOwner": "worker",
+             "baseRevision": 4, "targetRevision": 5, "nextProjection": projection(),
+             "expectedCheckpoint": checkpoint()}
     store.events.find_one.return_value = event
     store.ledgers.find_one_and_update.return_value = {"progressionRevision": 5}
-    projection = {"coins": {"confirmed": 260}, "achievements": {}, "derived": {},
-                  "checkpoint": {"bookId": "book1", "currentSceneId": "next", "terminal": False}}
-    result = await store.commit(event=event, lease_owner="worker", next_projection=projection,
-                                expected_checkpoint={"bookId": "book1", "currentSceneId": "start"})
+    result = await store.commit(event=event, lease_owner="worker")
     assert result["progressionRevision"] == 5
     filt, update = store.ledgers.find_one_and_update.await_args.args
     assert filt["progressionRevision"] == 4
     assert filt["checkpoint.currentSceneId"] == "start"
     assert update["$set"]["progressionRevision"] == 5
     assert update["$set"]["coins"]["confirmed"] == 260
+
+
+@pytest.mark.asyncio
+async def test_unpersisted_projection_cannot_commit(store):
+    event = {"_id": "e", "ledgerId": "l", "status": "committing", "leaseOwner": "worker",
+             "baseRevision": 0, "targetRevision": 1}
+    store.events.find_one.return_value = event
+    with pytest.raises(ReservationInvariantError, match="no durable projection"):
+        await store.commit(event=event, lease_owner="worker", next_projection=projection(),
+                           expected_checkpoint=checkpoint())
+    store.ledgers.find_one_and_update.assert_not_awaited()
 
 
 @pytest.mark.asyncio
