@@ -14,7 +14,7 @@ from pymongo.errors import DuplicateKeyError
 
 from .clean_ledger import InvalidCleanLedger, validate_clean_ledger
 from .reducer import new_state
-from .trusted_content import book_entry
+from .trusted_content import UnknownContentVersion, book_entry
 
 
 def clean_seed(registry: Mapping[str, Any], *, owner_id: str,
@@ -30,7 +30,7 @@ def clean_seed(registry: Mapping[str, Any], *, owner_id: str,
         book = book_entry(registry, book_id, content_version)
         if scene_id not in book["scenes"]:
             raise InvalidCleanLedger("opening scene absent from pinned content")
-    except (KeyError, TypeError, ValueError) as exc:
+    except (UnknownContentVersion, KeyError, TypeError, ValueError) as exc:
         raise InvalidCleanLedger("opening content unavailable or malformed") from exc
     seed = {"_id": uuid4().hex, "ownerType": "account", "ownerId": owner_id,
             "progressionRevision": 0, "coins": {"confirmed": 0},
