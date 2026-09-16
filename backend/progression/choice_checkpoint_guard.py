@@ -20,9 +20,10 @@ def prepare_nonterminal_choice(
 ) -> Dict[str, Any]:
     """Return a proposed next projection without modifying the input ledger.
 
-    ``event`` is a strictly parsed choice event; ``ledger`` must be server-loaded.
-    The caller remains responsible for identity, deduplication, transactional
-    fencing and persistence. Terminal transitions are deliberately unsupported.
+    ``event`` must be a strictly parsed choice event; ``ledger`` must be
+    server-loaded. The caller owns identity, deduplication, transactional
+    fencing and persistence. Achievement metadata and terminal transitions
+    are not yet specified, so choices that unlock achievements fail closed.
     """
     if event.kind != "choice":
         raise CheckpointConflict("only ordinary choice events are supported")
@@ -42,6 +43,8 @@ def prepare_nonterminal_choice(
     )
     if result["endsBook"]:
         raise CheckpointConflict("terminal choice transition is not specified")
+    if result["awarded"] or set(derived["achievements"]) != set(ledger["achievements"]):
+        raise CheckpointConflict("achievement ledger metadata is not specified")
     next_scene = result["nextSceneId"]
     if not isinstance(next_scene, str) or next_scene not in book["scenes"]:
         raise InvalidChoice("choice destination is not a trusted scene")
@@ -57,5 +60,5 @@ def prepare_nonterminal_choice(
             "derived": derived,
             "checkpoint": next_checkpoint,
         },
-        "awarded": list(result["awarded"]),
+        "awarded": [],
     }
