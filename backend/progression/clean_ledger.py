@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from .reducer import new_state
-from .trusted_content import book_entry
+from .trusted_content import UnknownContentVersion, book_entry
 
 
 class InvalidCleanLedger(ValueError):
@@ -46,7 +46,7 @@ def validate_clean_ledger(registry: Mapping[str, Any], ledger: Mapping[str, Any]
         book = book_entry(registry, book_id, version)
         if scene_id not in book["scenes"]:
             raise InvalidCleanLedger("initial scene absent from pinned content")
-    except (KeyError, TypeError, ValueError) as exc:
+    except (UnknownContentVersion, KeyError, TypeError, ValueError) as exc:
         raise InvalidCleanLedger("unavailable or malformed trusted content") from exc
     # Equality checks are intentional: no imported rewards, extra derived fields,
     # or client-controlled values may be smuggled into a clean seed.
