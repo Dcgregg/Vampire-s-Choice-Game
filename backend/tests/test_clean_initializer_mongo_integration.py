@@ -67,6 +67,26 @@ async def test_real_mongo_existing_progress_is_unchanged(ledgers):
 
 
 @pytest.mark.asyncio
+async def test_real_mongo_retired_opening_content_does_not_hide_existing_ledger(ledgers):
+    first = await initialize_clean_account_ledger(ledgers, registry(), **args())
+    await ledgers.update_one({"_id": first["_id"]}, {"$set": {
+        "progressionRevision": 4, "coins.confirmed": 19}})
+    # This registry no longer contains the opening book. Existing account
+    # discovery must not depend on the current new-account opening configuration.
+    retired_registry = {"characters": {"friend": 0}, "books": {}}
+    again = await initialize_clean_account_ledger(ledgers, retired_registry, **args())
+    assert again["_id"] == first["_id"]
+    assert again["progressionRevision"] == 4
+    assert again["coins"]["confirmed"] == 19
+    assert again["checkpoint"]["contentVersion"] == 1
+    assert await ledgers.count_documents({"ownerType": "account", "ownerId": "account-one"}) == 1
+    # Retired opening content must still prevent creation of a *new* account.
+    with pytest.raises(InvalidCleanLedger):
+        await initialize_clean_account_ledger(ledgers, retired_registry, **args("account-two"))
+    assert await ledgers.count_documents({}) == 1
+
+
+@pytest.mark.asyncio
 async def test_real_mongo_invalid_content_does_not_create_ledger(ledgers):
     with pytest.raises(InvalidCleanLedger):
         await initialize_clean_account_ledger(ledgers, registry(), **{
