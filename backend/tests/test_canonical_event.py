@@ -41,7 +41,8 @@ def test_non_ascii_is_utf8_not_escaped_and_lifecycle_is_distinct():
     "550e8400-e29b-41d4-7716-446655440000",
 ])
 def test_rejects_noncanonical_or_non_v4_event_ids(invalid):
-    with pytest.raises(ValueError, match="UUID v4"):
+    # The strict input model now rejects these before the helper's defensive check.
+    with pytest.raises(ValidationError):
         canonical_event_bytes({**CHOICE, "eventId": invalid})
 
 
