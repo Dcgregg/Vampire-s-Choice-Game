@@ -73,10 +73,11 @@ async def claim_story_only(
            "contentVersions": deepcopy(anon.get("contentVersions", {})),
            "playerState": story, "revision": 1, "createdAt": now, "updatedAt": now}
     try:
-        await account_saves.insert_one(deepcopy(doc))
+        inserted = await account_saves.insert_one(deepcopy(doc))
     except DuplicateKeyError:
         winner = await account_saves.find_one({"userId": authenticated_user_id})
         if winner is not None and winner.get("historicalAnonymousId") == player_id:
             return deepcopy(winner)
         raise StoryClaimConflict("concurrent account save won; review required")
+    doc["_id"] = inserted.inserted_id
     return deepcopy(doc)
