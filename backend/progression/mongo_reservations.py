@@ -3,6 +3,7 @@
 Only a trusted server validator may call reserve. Indexes must exist before
 writes, writes must be durable, and this adapter must be the sole revision
 writer. Never delete reserved events: revision attribution depends on them.
+Commit requires a MongoDB replica set with transaction support.
 """
 from __future__ import annotations
 
@@ -11,7 +12,7 @@ from typing import Any, Mapping
 from uuid import uuid4
 
 from pymongo import ASCENDING, ReturnDocument
-from pymongo.errors import DuplicateKeyError
+from pymongo.errors import DuplicateKeyError, OperationFailure
 
 from .reservations import Reservation, ReservationDecision, decide_retry
 
@@ -81,9 +82,6 @@ class MongoReservationStore:
             if event.get("baseRevision") != base_revision:
                 raise ReservationInvariantError("event_id_base_revision_mismatch")
             return event
-        # A ledger that already passed the target cannot be attributed to a
-        # newly created reservation. A concurrent writer must own the unique
-        # target reservation before its ledger CAS can advance the revision.
         ledger = await self.ledgers.find_one({"_id": ledger_id})
         if ledger is None or ledger.get("progressionRevision") != base_revision:
             raise ProgressionConflict("ledger revision changed before reservation")
@@ -130,48 +128,74 @@ class MongoReservationStore:
     async def commit(self, *, event: Mapping[str, Any], lease_owner: str,
                      next_projection: Mapping[str, Any] | None = None,
                      expected_checkpoint: Mapping[str, Any] | None = None) -> dict:
-        """CAS the ledger using ONLY the immutable projection in the event.
+        """Atomically fence the lease owner and CAS the immutable projection.
 
-        Legacy arguments are accepted solely to detect mismatches; they cannot
-        substitute for missing persisted data or change a persisted result.
+        A conditional event *write* and ledger CAS share one transaction. A
+        takeover that commits first invalidates this transaction's event write;
+        a takeover that races later conflicts with the transaction's write.
+        No transaction errors are silently retried: callers must reconcile
+        ambiguous results via durable event/ledger state before any retry.
         """
         if event.get("status") != "committing" or event.get("leaseOwner") != lease_owner:
             raise ReservationBusy("not the reservation owner")
         base, target = event.get("baseRevision"), event.get("targetRevision")
         if isinstance(base, bool) or not isinstance(base, int) or target != base + 1:
             raise ReservationInvariantError("invalid revision reservation")
-        active = await self.events.find_one({"_id": event["_id"], "status": "committing",
-                                             "leaseOwner": lease_owner,
-                                             "leaseUntil": {"$gt": datetime.now(timezone.utc)}})
-        if active is None:
-            raise ReservationBusy("lease expired or ownership changed")
-        projection, checkpoint = active.get("nextProjection"), active.get("expectedCheckpoint")
-        if projection is None or checkpoint is None:
-            raise ReservationInvariantError("reservation has no durable projection; cannot commit")
-        if next_projection is not None and dict(next_projection) != projection:
-            raise ReservationInvariantError("caller projection differs from reserved projection")
-        if expected_checkpoint is not None and dict(expected_checkpoint) != checkpoint:
-            raise ReservationInvariantError("caller checkpoint differs from reserved checkpoint")
-        if set(projection) - _PROJECTION_FIELDS or not _REQUIRED_FIELDS.issubset(projection):
-            raise ReservationInvariantError("invalid persisted projection")
-        filt = {"_id": active["ledgerId"], "progressionRevision": base,
-                "checkpoint.bookId": checkpoint["bookId"],
-                "checkpoint.currentSceneId": checkpoint["currentSceneId"],
-                "checkpoint.terminal": checkpoint["terminal"],
-                "mergedInto": {"$exists": False}, "fencedAt": {"$exists": False},
-                "claimedBy": {"$exists": False}}
-        updated = await self.ledgers.find_one_and_update(
-            filt, {"$set": {**projection, "progressionRevision": target}},
-            return_document=ReturnDocument.AFTER,
-        )
-        if updated is not None:
-            return updated
-        current = await self.ledgers.find_one({"_id": active["ledgerId"]})
-        if current is None or current.get("progressionRevision", -1) < target:
-            raise ProgressionConflict("ledger checkpoint or revision changed")
-        # Attribution requires the unique target index, retained reservations,
-        # durable writes, and this adapter being the sole revision writer.
-        return current
+        # Both collections must belong to the same MongoDB client/database.
+        client = self.events.database.client
+        async with await client.start_session() as session:
+            try:
+                async with session.start_transaction():
+                    active = await self.events.find_one(
+                        {"_id": event["_id"], "status": "committing",
+                         "leaseOwner": lease_owner,
+                         "leaseUntil": {"$gt": datetime.now(timezone.utc)}},
+                        session=session,
+                    )
+                    if active is None:
+                        raise ReservationBusy("lease expired or ownership changed")
+                    projection, checkpoint = active.get("nextProjection"), active.get("expectedCheckpoint")
+                    if projection is None or checkpoint is None:
+                        raise ReservationInvariantError("reservation has no durable projection; cannot commit")
+                    if next_projection is not None and dict(next_projection) != projection:
+                        raise ReservationInvariantError("caller projection differs from reserved projection")
+                    if expected_checkpoint is not None and dict(expected_checkpoint) != checkpoint:
+                        raise ReservationInvariantError("caller checkpoint differs from reserved checkpoint")
+                    if set(projection) - _PROJECTION_FIELDS or not _REQUIRED_FIELDS.issubset(projection):
+                        raise ReservationInvariantError("invalid persisted projection")
+                    if not {"bookId", "currentSceneId", "terminal"}.issubset(checkpoint):
+                        raise ReservationInvariantError("invalid persisted checkpoint")
+                    # This is deliberately a WRITE, not a preflight-only read.
+                    # A concurrent acquire() writes this same document.
+                    fenced = await self.events.find_one_and_update(
+                        {"_id": active["_id"], "status": "committing",
+                         "leaseOwner": lease_owner,
+                         "leaseUntil": {"$gt": datetime.now(timezone.utc)}},
+                        {"$inc": {"commitFence": 1}},
+                        return_document=ReturnDocument.AFTER, session=session,
+                    )
+                    if fenced is None:
+                        raise ReservationBusy("lease expired or ownership changed")
+                    filt = {"_id": active["ledgerId"], "progressionRevision": base,
+                            "checkpoint.bookId": checkpoint["bookId"],
+                            "checkpoint.currentSceneId": checkpoint["currentSceneId"],
+                            "checkpoint.terminal": checkpoint["terminal"],
+                            "mergedInto": {"$exists": False}, "fencedAt": {"$exists": False},
+                            "claimedBy": {"$exists": False}}
+                    updated = await self.ledgers.find_one_and_update(
+                        filt, {"$set": {**projection, "progressionRevision": target}},
+                        return_document=ReturnDocument.AFTER, session=session,
+                    )
+                    if updated is None:
+                        current = await self.ledgers.find_one({"_id": active["ledgerId"]}, session=session)
+                        if current is None or current.get("progressionRevision", -1) < target:
+                            raise ProgressionConflict("ledger checkpoint or revision changed")
+                        return current
+                    return updated
+            except OperationFailure as exc:
+                if exc.has_error_label("TransientTransactionError") or exc.code == 112:
+                    raise ReservationBusy("lease fencing transaction conflicted; reconcile before retry") from exc
+                raise
 
     async def finalise(self, *, event: Mapping[str, Any], payload_hash: str) -> dict:
         if event.get("payloadHash") != payload_hash:
