@@ -19,19 +19,29 @@ def replay_nonterminal_choices(
 ) -> dict:
     """Validate a bounded ordered sequence without mutating the trusted ledger.
 
-    Every event must name the current checkpoint and revision; an event ID may
-    appear only once in the supplied sequence. Durable event deduplication is
-    still the responsibility of the future transactional event store.
+    Event IDs must not occur in either the supplied sequence or the trusted
+    ledger's retained attribution map. Durable deduplication still requires a
+    transactionally fenced event store; this pure check is not sufficient.
     """
     if not isinstance(events, (list, tuple)) or not 1 <= len(events) <= 100:
         raise CheckpointConflict('expected one to one hundred choice events')
+    if not isinstance(trusted_ledger, Mapping):
+        raise CheckpointConflict('trusted ledger required')
+    retained = trusted_ledger.get('appliedEventIds')
+    if not isinstance(retained, Mapping) or any(
+        not isinstance(event_id, str) or not event_id
+        for event_id in retained.values()
+    ):
+        raise CheckpointConflict('trusted event attribution required')
+    if len(set(retained.values())) != len(retained):
+        raise CheckpointConflict('duplicate trusted event attribution')
     proposed = deepcopy(dict(trusted_ledger))
-    seen: set[str] = set()
+    seen: set[str] = set(retained.values())
     for event in events:
         if not isinstance(event, StrictChoiceEvent):
             raise CheckpointConflict('strictly parsed choice event required')
         if event.eventId in seen:
-            raise CheckpointConflict('duplicate event ID in replay')
+            raise CheckpointConflict('duplicate or previously applied event ID')
         seen.add(event.eventId)
         proposal = prepare_nonterminal_choice(registry, proposed, event)
         proposed.update(proposal['nextProjection'])
