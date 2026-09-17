@@ -1,8 +1,11 @@
 import { API_BASE } from './config';
 import type { CloudSave } from './cloudClient';
 
+/** The story-only account route intentionally does not return an anonymous playerId. */
+export type StoryAccountSave = Omit<CloudSave, 'playerId'>;
+
 export type StoryClaimResult =
-  | { ok: true; save: CloudSave }
+  | { ok: true; save: StoryAccountSave }
   | { ok: false; kind: 'conflict'; resolution: 'review_existing_progress_or_retry'; reason?: string }
   | { ok: false; kind: 'denied' | 'unauthenticated' | 'invalid_request' | 'unavailable' };
 
@@ -30,7 +33,7 @@ export async function claimStoryOnly(
   }
 
   const body = await response.json().catch(() => ({}));
-  if (response.ok) return { ok: true, save: body as CloudSave };
+  if (response.ok) return { ok: true, save: body as StoryAccountSave };
   if (response.status === 401) return { ok: false, kind: 'unauthenticated' };
   if (response.status === 403) return { ok: false, kind: 'denied' };
   if (response.status === 409 && body?.detail?.error === 'claim_conflict') {
