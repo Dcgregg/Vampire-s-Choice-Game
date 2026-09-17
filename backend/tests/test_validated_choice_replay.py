@@ -4,13 +4,13 @@ from copy import deepcopy
 import pytest
 
 from progression.choice_checkpoint_guard import CheckpointConflict
-from progression.strict_event_input import StrictChoiceEvent
 from progression.trusted_content import InvalidChoice
 from progression.validated_choice_replay import replay_nonterminal_choices
 from test_choice_checkpoint_guard import event, ledger, registry
 
 SECOND_ID = '550e8400-e29b-41d4-a716-446655440001'
 PRIOR_ID = '550e8400-e29b-41d4-a716-446655440002'
+THIRD_ID = '550e8400-e29b-41d4-a716-446655440003'
 
 
 def trusted_ledger():
@@ -30,7 +30,25 @@ def test_replays_only_reachable_choices_from_trusted_checkpoint():
     assert result['checkpoint']['currentSceneId'] == 'end'
     assert result['coins']['confirmed'] == 530
     assert result['derived']['coins'] == 530
-    assert result['appliedEventIds'] == {'3': PRIOR_ID}
+    assert result['appliedEventIds'] == {'3': PRIOR_ID, '4': event().eventId, '5': SECOND_ID}
+
+
+def test_retains_new_event_ids_between_proposed_batches():
+    source = trusted_ledger()
+    first = replay_nonterminal_choices(registry(), source, [event()])
+    assert source['appliedEventIds'] == {'3': PRIOR_ID}
+    assert first['appliedEventIds'] == {'3': PRIOR_ID, '4': event().eventId}
+    with pytest.raises(CheckpointConflict, match='previously applied'):
+        replay_nonterminal_choices(registry(), first, [
+            event(baseProgressionRevision=4, fromSceneId='next',
+                  choiceId='noncurrent'),
+        ])
+    second = replay_nonterminal_choices(registry(), first, [
+        event(eventId=SECOND_ID, baseProgressionRevision=4,
+              fromSceneId='next', choiceId='noncurrent'),
+    ])
+    assert second['appliedEventIds'] == {'3': PRIOR_ID, '4': event().eventId, '5': SECOND_ID}
+    assert first['appliedEventIds'] == {'3': PRIOR_ID, '4': event().eventId}
 
 
 @pytest.mark.parametrize('choices', [
@@ -57,6 +75,7 @@ def test_fails_closed_on_forged_or_unsupported_history(choices):
 
 @pytest.mark.parametrize('retained', [
     None, [], {'3': ''}, {'3': 3}, {'2': PRIOR_ID, '3': PRIOR_ID},
+    {'4': PRIOR_ID}, {'03': PRIOR_ID}, {'bad': PRIOR_ID},
 ])
 def test_rejects_missing_or_corrupt_trusted_attribution(retained):
     source = trusted_ledger()
