@@ -41,4 +41,4 @@ jobs:
         run: python -m pip install -r backend/requirements.txt pytest pytest-asyncio
       - name: Test trusted choice plan through transactional reservation
         working-directory: backend
-        run: python -m pytest -q -rx tests/test_trusted_choice_reservation_mongo_integration.py tests/test_trusted_choice_competing_reservations_mongo.py
+        run: python -m pytest -q -rx tests/test_trusted_choice_reservation_mongo_integration.py tests/test_trusted_choice_competing_reservations_mongo.py tests/test_trusted_choice_foreign_owner_mongo.py
