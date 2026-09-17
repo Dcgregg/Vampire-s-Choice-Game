@@ -23,7 +23,7 @@ export async function linkFreshCredentialedStory(
   const result = await claimStoryWithCredential(
     issuedSave.playerId, issuedSave.revision, claimCredential,
   );
-  if (result.ok) return { kind: 'claimed', save: result.save };
+  if (!('kind' in result)) return { kind: 'claimed', save: result.save };
   if (result.kind === 'conflict') return { kind: 'account_conflict' };
   return { kind: result.kind };
 }
