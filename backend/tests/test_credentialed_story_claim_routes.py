@@ -8,6 +8,9 @@ from progression import credentialed_story_claim_routes as routes
 from progression.story_claim import StoryClaimConflict, StoryClaimDenied
 
 
+CREDENTIAL = 'A' * 43
+
+
 async def authenticated():
     return {'user_id': 'account-from-session'}
 
@@ -31,6 +34,18 @@ def test_missing_credential_denied_without_service_call(monkeypatch):
     response = http.post('/api/me/claim-story-with-credential', json=request())
     assert response.status_code == 403
     assert response.json() == {'detail': {'error': 'claim_denied'}}
+    assert response.headers['cache-control'] == 'no-store'
+    service.assert_not_awaited()
+
+
+def test_malformed_credentials_fail_before_transaction(monkeypatch):
+    http, service = make_client(monkeypatch, {})
+    for credential in ('short', 'A' * 42, 'A' * 44, 'A' * 42 + '!', 'A' * 42 + ' '):
+        response = http.post('/api/me/claim-story-with-credential', json=request(),
+                             headers={'X-Anonymous-Claim-Credential': credential})
+        assert response.status_code == 403
+        assert response.headers['cache-control'] == 'no-store'
+        assert credential not in response.text
     service.assert_not_awaited()
 
 
@@ -41,32 +56,35 @@ def test_verified_identity_and_credential_passed_to_transaction(monkeypatch):
            'revision': 1, 'createdAt': 'now', 'updatedAt': 'now'}
     http, service = make_client(monkeypatch, doc)
     response = http.post('/api/me/claim-story-with-credential', json=request(),
-                         headers={'X-Anonymous-Claim-Credential': 'secret-value'})
+                         headers={'X-Anonymous-Claim-Credential': CREDENTIAL})
     assert response.status_code == 200
+    assert response.headers['cache-control'] == 'no-store'
+    assert response.headers['pragma'] == 'no-cache'
     assert response.json()['playerState']['bloodCoins'] == 0
     assert '_id' not in response.text and 'userId' not in response.text
-    assert 'secret-value' not in response.text
+    assert CREDENTIAL not in response.text
     assert service.await_args.kwargs['authenticated_user_id'] == 'account-from-session'
-    assert service.await_args.kwargs['claim_credential'] == 'secret-value'
+    assert service.await_args.kwargs['claim_credential'] == CREDENTIAL
 
 
 def test_client_cannot_choose_identity_or_supply_extra_fields(monkeypatch):
     http, service = make_client(monkeypatch, {})
     response = http.post('/api/me/claim-story-with-credential',
                          json={**request(), 'userId': 'attacker'},
-                         headers={'X-Anonymous-Claim-Credential': 'secret-value'})
+                         headers={'X-Anonymous-Claim-Credential': CREDENTIAL})
     assert response.status_code == 422
     service.assert_not_awaited()
 
 
 def test_denial_and_conflict_do_not_echo_secret(monkeypatch):
-    for error, status in ((StoryClaimDenied('secret-value'), 403),
-                          (StoryClaimConflict('secret-value'), 409)):
+    for error, status in ((StoryClaimDenied(CREDENTIAL), 403),
+                          (StoryClaimConflict(CREDENTIAL), 409)):
         http, _ = make_client(monkeypatch, error)
         response = http.post('/api/me/claim-story-with-credential', json=request(),
-                             headers={'X-Anonymous-Claim-Credential': 'secret-value'})
+                             headers={'X-Anonymous-Claim-Credential': CREDENTIAL})
         assert response.status_code == status
-        assert 'secret-value' not in response.text
+        assert response.headers['cache-control'] == 'no-store'
+        assert CREDENTIAL not in response.text
         assert 'accountSave' not in response.text
 
 
@@ -75,6 +93,6 @@ def test_authentication_dependency_blocks_claim(monkeypatch):
         raise HTTPException(status_code=401, detail={'error': 'not_authenticated'})
     http, service = make_client(monkeypatch, {}, identity=unauthenticated)
     response = http.post('/api/me/claim-story-with-credential', json=request(),
-                         headers={'X-Anonymous-Claim-Credential': 'secret-value'})
+                         headers={'X-Anonymous-Claim-Credential': CREDENTIAL})
     assert response.status_code == 401
     service.assert_not_awaited()
