@@ -5,6 +5,7 @@ import pytest
 
 from progression.choice_checkpoint_guard import CheckpointConflict
 from progression.trusted_choice_reservation import plan_account_choice_reservation
+from progression.trusted_content import InvalidChoice
 from progression.trusted_owner import ProgressionAccessDenied
 from test_choice_checkpoint_guard import event, ledger, registry
 
@@ -66,5 +67,5 @@ def test_rejects_unowned_missing_or_corrupt_attribution(changes):
     {"choiceId": "award"}, {"contentVersion": 2},
 ])
 def test_invalid_or_unsupported_choices_never_produce_reservation(changes):
-    with pytest.raises((CheckpointConflict, ValueError)):
+    with pytest.raises((CheckpointConflict, InvalidChoice)):
         plan(owned_ledger(), event(**changes))
