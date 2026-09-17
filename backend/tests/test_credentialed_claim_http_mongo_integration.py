@@ -1,6 +1,6 @@
 """Inert HTTP-to-Mongo claim integration; TEST_MONGO_URI must be disposable.
 
-This mounts only the experimental router in a test FastAPI app. It does not
+This mounts only experimental routers in a test FastAPI app. It does not
 register routes in the live server or exercise a real browser/login session.
 """
 import pytest
@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from progression.anonymous_claim_proof import issue_claim_credential
+from progression.anonymous_credential_routes import make_anonymous_credential_router
 from progression.credentialed_story_claim_routes import make_credentialed_story_claim_router
 from test_story_claim_transaction_integration import collections  # noqa: F401
 from test_story_claim_mongo_integration import anonymous_doc
@@ -94,3 +95,40 @@ async def test_http_claim_cannot_transfer_already_claimed_story_to_second_accoun
     assert await account_saves.count_documents({'userId': 'first-account'}) == 1
     assert await account_saves.count_documents({'userId': 'second-account'}) == 0
     assert (await anonymous_saves.find_one({'playerId': original['playerId']}))['claimedBy'] == 'first-account'
+
+
+@pytest.mark.asyncio
+async def test_http_issuance_to_claim_uses_server_generated_identity_and_disposable_mongo(collections):
+    anonymous_saves, account_saves = collections
+    seed = anonymous_doc()
+    initial = {key: seed[key] for key in ('saveSchemaVersion', 'contentVersions', 'playerState')}
+    initial['playerState']['bloodCoins'] = 0
+    initial['playerState']['achievements'] = {}
+    initial['playerState']['dailyStreak'] = 0
+    initial['playerState']['lastLoginDate'] = ''
+    app = FastAPI()
+    app.include_router(make_anonymous_credential_router(
+        anonymous_saves, initial_save=lambda: initial, now=lambda: 'issued'))
+    app.include_router(make_credentialed_story_claim_router(
+        anonymous_saves, account_saves, current_user=authenticated, now=lambda: 'claimed'))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url='http://test') as http:
+        issued = await http.post('/api/anonymous/credentialed-save', json={})
+        assert issued.status_code == 201, issued.text
+        assert issued.headers['cache-control'] == 'no-store'
+        public = issued.json()['save']
+        credential = issued.json()['claimCredential']
+        assert public['playerId'].startswith('vc_')
+        assert public['revision'] == 1
+        assert '_id' not in public and 'claimCredentialDigest' not in public
+        stored = await anonymous_saves.find_one({'playerId': public['playerId']})
+        assert stored is not None and stored['claimCredentialDigest'] != credential
+        payload = {'playerId': public['playerId'], 'expectedAnonymousRevision': public['revision']}
+        claimed = await http.post('/api/me/claim-story-with-credential', json=payload,
+                                  headers={'X-Anonymous-Claim-Credential': credential})
+        assert claimed.status_code == 200, claimed.text
+        assert claimed.json()['playerState']['progress'] == public['playerState']['progress']
+        assert claimed.json()['playerState']['bloodCoins'] == 0
+        assert claimed.json()['playerState']['achievements'] == {}
+        assert credential not in claimed.text and stored['claimCredentialDigest'] not in claimed.text
+    assert await account_saves.count_documents({'userId': 'test-account'}) == 1
+    assert (await anonymous_saves.find_one({'playerId': public['playerId']}))['claimedBy'] == 'test-account'
