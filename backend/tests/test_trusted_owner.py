@@ -27,7 +27,8 @@ def test_missing_or_other_identity_denied(identity):
 
 @pytest.mark.parametrize("value", [None, {}, ledger(ownerType="anonymous"),
                                     ledger(ownerId="user-b"), ledger(mergedInto="another"),
-                                    ledger(fencedAt="now"), ledger(claimedBy="other"),
+                                    ledger(fenced=True), ledger(fencedAt="now"),
+                                    ledger(claimedBy="other"),
                                     ledger(progressionRevision=True), ledger(progressionRevision=-1),
                                     ledger(appliedEventIds=None), ledger(appliedEventIds=[]),
                                     ledger(appliedEventIds="forged")])
