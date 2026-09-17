@@ -35,6 +35,10 @@ def replay_nonterminal_choices(
                    or not isinstance(event_id, str) or not event_id
                    for key, event_id in retained.items())):
         raise CheckpointConflict('trusted event attribution required')
+    # An incomplete history must not be extended into apparently continuous
+    # attribution. This local check does not authenticate the history itself.
+    if revision > 0 and str(revision) not in retained:
+        raise CheckpointConflict('latest revision lacks trusted event attribution')
     if len(set(retained.values())) != len(retained):
         raise CheckpointConflict('duplicate trusted event attribution')
     proposed = deepcopy(dict(trusted_ledger))
