@@ -1,8 +1,8 @@
 import { getSave, type CloudSave } from '../sync/cloudClient';
-import { claimStoryOnly } from '../sync/storyClaimClient';
+import { claimStoryOnly, type StoryAccountSave } from '../sync/storyClaimClient';
 
 export type StoryOnlyLinkOutcome =
-  | { kind: 'claimed'; save: CloudSave }
+  | { kind: 'claimed'; save: StoryAccountSave }
   | { kind: 'no_anonymous_cloud_save' }
   | { kind: 'account_conflict'; reason?: string }
   | { kind: 'denied' | 'unauthenticated' | 'invalid_request' | 'unavailable' };
@@ -24,7 +24,7 @@ export async function linkAnonymousStoryOnly(playerId: string): Promise<StoryOnl
   if (!anonymous) return { kind: 'no_anonymous_cloud_save' };
 
   const result = await claimStoryOnly(playerId, anonymous.revision);
-  if (result.ok) return { kind: 'claimed', save: result.save };
+  if (result.ok === true) return { kind: 'claimed', save: result.save };
   if (result.kind === 'conflict') return { kind: 'account_conflict', reason: result.reason };
   return { kind: result.kind };
 }
