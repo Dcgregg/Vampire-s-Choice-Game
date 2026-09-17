@@ -40,6 +40,8 @@ def test_failed_insert_never_delivers_a_credential(monkeypatch):
                                         'playerState': {}}, now=lambda: 'now'))
     response = TestClient(app).post('/api/anonymous/credentialed-save')
     assert response.status_code == 503
+    assert response.headers['cache-control'] == 'no-store'
+    assert response.headers['pragma'] == 'no-cache'
     assert response.json() == {'detail': {'error': 'creation_unavailable'}}
     assert 'private database error' not in response.text
     assert 'claimCredential' not in response.text
