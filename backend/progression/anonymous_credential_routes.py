@@ -17,6 +17,9 @@ from .anonymous_credential_issuance import (
 )
 
 
+_NO_STORE_HEADERS = {'Cache-Control': 'no-store', 'Pragma': 'no-cache'}
+
+
 def make_anonymous_credential_router(
     anonymous_saves: Any, *, initial_save: Callable[[], Mapping[str, Any]],
     now: Callable[[], str],
@@ -26,14 +29,17 @@ def make_anonymous_credential_router(
 
     @router.post('/anonymous/credentialed-save', status_code=201)
     async def create(response: Response):
-        response.headers['Cache-Control'] = 'no-store'
-        response.headers['Pragma'] = 'no-cache'
+        response.headers.update(_NO_STORE_HEADERS)
         try:
             public, credential = await create_credentialed_anonymous_save(
                 anonymous_saves, initial_save=initial_save(), now=now(),
             )
         except (AnonymousCreationUnavailable, ValueError) as exc:
-            raise HTTPException(status_code=503, detail={'error': 'creation_unavailable'}) from exc
+            # FastAPI discards headers on `response` when raising HTTPException.
+            raise HTTPException(
+                status_code=503, detail={'error': 'creation_unavailable'},
+                headers=_NO_STORE_HEADERS,
+            ) from exc
         return {'save': public, 'claimCredential': credential}
 
     return router
