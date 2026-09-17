@@ -10,13 +10,14 @@ const save = { saveSchemaVersion: 3, contentVersions: {}, playerState: { progres
 afterEach(() => vi.unstubAllGlobals());
 
 describe('claimStoryWithCredential', () => {
-  it('sends proof in a header only, with cookie authentication', async () => {
+  it('sends proof in a header only, with cookie authentication and no browser cache', async () => {
     const fetchMock = vi.fn().mockResolvedValue(response(200, save));
     vi.stubGlobal('fetch', fetchMock);
     expect(await claimStoryWithCredential('vc_abcdefgh', 2, credential)).toEqual({ ok: true, save });
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).not.toContain(credential);
     expect(init.credentials).toBe('include');
+    expect(init.cache).toBe('no-store');
     expect(init.headers['X-Anonymous-Claim-Credential']).toBe(credential);
     expect(JSON.parse(init.body)).toEqual({ playerId: 'vc_abcdefgh', expectedAnonymousRevision: 2 });
     expect(init.body).not.toContain(credential);
