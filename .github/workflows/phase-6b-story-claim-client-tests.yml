@@ -25,4 +25,4 @@ jobs:
       - name: Type-check frontend
         run: yarn lint
       - name: Run story-only claim integration contracts
-        run: yarn test src/sync/__tests__/storyClaimClient.test.ts src/auth/__tests__/storyOnlyLink.test.ts
+        run: yarn test src/sync/__tests__/storyClaimClient.test.ts src/sync/__tests__/credentialedStoryClaimClient.test.ts src/auth/__tests__/storyOnlyLink.test.ts
