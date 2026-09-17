@@ -25,7 +25,7 @@ export async function claimStoryWithCredential(
   let response: Response;
   try {
     response = await fetch(`${API_BASE}/me/claim-story-with-credential`, {
-      method: 'POST', credentials: 'include',
+      method: 'POST', credentials: 'include', cache: 'no-store',
       headers: { 'Content-Type': 'application/json', 'X-Anonymous-Claim-Credential': claimCredential },
       body: JSON.stringify({ playerId, expectedAnonymousRevision }),
     });
