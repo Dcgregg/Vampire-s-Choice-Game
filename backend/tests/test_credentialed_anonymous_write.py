@@ -80,6 +80,16 @@ async def test_wrong_proof_cross_id_and_legacy_fail_closed():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('state', [None, {'progress': {}}, 'not a story'])
+async def test_invalid_proof_is_denied_before_narrative_validation(state):
+    saves, credential, _ = fixture()
+    with pytest.raises(AnonymousWriteDenied):
+        await write(saves, 'x' * 43, state, expected_revision=0)
+    assert saves.doc['revision'] == 1
+    assert saves.doc['playerState'] == {'progress': {}}
+
+
+@pytest.mark.asyncio
 async def test_claimed_and_stale_revision_are_rejected():
     saves, credential, state = fixture()
     saves.doc['claimedBy'] = 'user1'
