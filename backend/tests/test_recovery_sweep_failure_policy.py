@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from progression.mongo_reservations import ReservationInvariantError
 from progression.recovery_sweep import sweep_expired
 
 
@@ -50,3 +51,20 @@ async def test_unexpected_database_error_aborts_sweep_without_processing_later_e
     assert query["status"] == "committing"
     assert isinstance(query["leaseUntil"]["$lte"], datetime)
     assert query["leaseUntil"]["$lte"].tzinfo == timezone.utc
+
+
+@pytest.mark.asyncio
+async def test_non_applied_recovery_result_aborts_without_processing_later_events():
+    """A supposedly successful recovery must not silently skip an unresolved event."""
+    store = MagicMock()
+    store.events.find.return_value = _Cursor([{"_id": "first"}, {"_id": "second"}])
+    attempted = []
+
+    async def recover(event):
+        attempted.append(event["_id"])
+        return {"status": "committing"}
+
+    store.recover = recover
+    with pytest.raises(ReservationInvariantError, match="non-applied event"):
+        await sweep_expired(store, limit=2)
+    assert attempted == ["first"]
