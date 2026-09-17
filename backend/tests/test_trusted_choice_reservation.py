@@ -69,3 +69,14 @@ def test_rejects_unowned_missing_or_corrupt_attribution(changes):
 def test_invalid_or_unsupported_choices_never_produce_reservation(changes):
     with pytest.raises((CheckpointConflict, InvalidChoice)):
         plan(owned_ledger(), event(**changes))
+
+
+def test_unparsed_choice_payload_cannot_be_planned():
+    current = owned_ledger()
+    before = deepcopy(current)
+    with pytest.raises(CheckpointConflict, match="strictly parsed"):
+        plan_account_choice_reservation(
+            registry(), current, event().model_dump(mode="python"),
+            authenticated_user_id="account-a",
+        )
+    assert current == before
