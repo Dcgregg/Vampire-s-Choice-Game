@@ -21,6 +21,6 @@ jobs:
           python-version: '3.11'
       - name: Install isolated test dependencies
         run: python -m pip install -r backend/requirements.txt pytest pytest-asyncio httpx
-      - name: Run isolated claim, proof, issuance and credentialed read tests
+      - name: Run isolated claim, proof, issuance and credentialed read/write tests
         working-directory: backend
-        run: python -m pytest -q tests/test_story_claim_routes.py tests/test_credentialed_story_claim_routes.py tests/test_anonymous_claim_proof.py tests/test_anonymous_credential_issuance.py tests/test_anonymous_credential_routes.py tests/test_credentialed_anonymous_read.py
+        run: python -m pytest -q tests/test_story_claim_routes.py tests/test_credentialed_story_claim_routes.py tests/test_anonymous_claim_proof.py tests/test_anonymous_credential_issuance.py tests/test_anonymous_credential_routes.py tests/test_credentialed_anonymous_read.py tests/test_credentialed_anonymous_write.py
