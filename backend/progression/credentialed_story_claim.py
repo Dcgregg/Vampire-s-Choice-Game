@@ -67,7 +67,7 @@ async def claim_story_with_credential(
                     result = await anonymous_saves.update_one(
                         {'playerId': player_id, 'revision': expected_anonymous_revision,
                          'claimCredentialDigest': anon['claimCredentialDigest'],
-                         '$or': [{'claimedBy': {'$exists': False}},
+                         '$or': [{'claimedBy': None},
                                  {'claimedBy': authenticated_user_id}]},
                         {'$set': {'claimedBy': authenticated_user_id, 'updatedAt': now}},
                         session=session,
