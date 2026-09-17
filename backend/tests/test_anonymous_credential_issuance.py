@@ -71,3 +71,23 @@ async def test_invalid_input_does_not_write():
         await create_credentialed_anonymous_save(
             saves, initial_save={'playerId': 'vc_attacker000'}, now='now')
     assert saves.docs == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('bad', [
+    {'saveSchemaVersion': True},
+    {'saveSchemaVersion': 0},
+    {'contentVersions': {'book1': True}},
+    {'contentVersions': {'book1': 0}},
+    {'contentVersions': []},
+    {'playerState': []},
+    {'playerState': {'bloodCoins': 50}},
+    {'playerState': {'achievements': {'first': True}}},
+    {'playerState': {'dailyStreak': 1}},
+])
+async def test_bad_initial_envelope_fails_before_insert(bad):
+    saves = Saves()
+    with pytest.raises(ValueError):
+        await create_credentialed_anonymous_save(
+            saves, initial_save={**initial(), **bad}, now='now')
+    assert saves.docs == []
