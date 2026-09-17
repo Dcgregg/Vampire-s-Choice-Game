@@ -33,18 +33,19 @@ async def write_credentialed_anonymous_save(
     if (not isinstance(player_id, str) or _PLAYER_ID.fullmatch(player_id) is None
             or not isinstance(now, str) or not now):
         raise AnonymousWriteDenied('anonymous write denied')
-    if type(expected_revision) is not int or expected_revision < 1:
-        raise AnonymousWriteConflict('invalid anonymous revision')
-    try:
-        story = story_only_player_state(player_state)
-    except InvalidStoryTransfer as exc:
-        raise AnonymousWriteConflict('invalid narrative state') from exc
     doc = await anonymous_saves.find_one({'playerId': player_id})
     if (doc is None or doc.get('claimedBy') is not None
             or not verify_claim_credential(doc, claim_credential)):
         raise AnonymousWriteDenied('anonymous write denied')
+    # Do not expose revision or narrative-validation details before proof.
+    if type(expected_revision) is not int or expected_revision < 1:
+        raise AnonymousWriteConflict('invalid anonymous revision')
     if doc.get('revision') != expected_revision:
         raise AnonymousWriteConflict('anonymous revision changed')
+    try:
+        story = story_only_player_state(player_state)
+    except InvalidStoryTransfer as exc:
+        raise AnonymousWriteConflict('invalid narrative state') from exc
     result = await anonymous_saves.update_one(
         {'playerId': player_id, 'revision': expected_revision,
          'claimCredentialDigest': doc['claimCredentialDigest'],
