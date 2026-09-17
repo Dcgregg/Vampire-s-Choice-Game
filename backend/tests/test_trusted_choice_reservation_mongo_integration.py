@@ -10,7 +10,7 @@ import pytest
 from motor.motor_asyncio import AsyncIOMotorClient
 
 from progression.attributed_mongo_reservations import AttributedMongoReservationStore
-from progression.mongo_reservations import ProgressionConflict, ReservationInvariantError
+from progression.mongo_reservations import ReservationInvariantError
 from progression.trusted_choice_reservation import plan_account_choice_reservation
 from test_choice_checkpoint_guard import event, registry
 
@@ -55,9 +55,17 @@ async def test_server_planned_choice_commits_once_and_replay_cannot_award_again(
         after = await db.ledgers.find_one({'_id': ledger_id})
         assert after['coins']['confirmed'] == 30
         assert after['progressionRevision'] == 4
-        with pytest.raises((ProgressionConflict, ReservationInvariantError)):
-            await store.reserve(**args)
-        assert (await db.ledgers.find_one({'_id': ledger_id}))['coins']['confirmed'] == 30
+        retried = await store.reserve(**args)
+        assert retried['_id'] == applied['_id']
+        assert retried['status'] == 'applied'
+        assert retried['resultRevision'] == 4
+        with pytest.raises(ReservationInvariantError, match='event_id_payload_mismatch'):
+            await store.reserve(**{**args, 'payload_hash': 'different-payload'})
+        unchanged = await db.ledgers.find_one({'_id': ledger_id})
+        assert unchanged['coins']['confirmed'] == 30
+        assert unchanged['progressionRevision'] == 4
+        assert unchanged['appliedEventIds']['4'] == choice.eventId
+        assert await db.events.count_documents({'ledgerId': ledger_id, 'eventId': choice.eventId}) == 1
     finally:
         await client.drop_database(db.name)
         client.close()
