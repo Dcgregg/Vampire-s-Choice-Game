@@ -7,6 +7,7 @@ Never pass credentials through URLs or log them. Legacy saves fail closed.
 from __future__ import annotations
 
 import asyncio
+import re
 from copy import deepcopy
 from typing import Any
 
@@ -15,6 +16,9 @@ from pymongo.errors import DuplicateKeyError, OperationFailure
 from .anonymous_claim_proof import credential_digest, verify_claim_credential, InvalidClaimProof
 from .story_claim import StoryClaimConflict, StoryClaimDenied
 from .story_only_transfer import story_only_player_state
+
+
+_ANONYMOUS_ID_PATTERN = re.compile(r'vc_[A-Za-z0-9_-]{8,64}\Z')
 
 
 async def claim_story_with_credential(
@@ -30,7 +34,7 @@ async def claim_story_with_credential(
     """
     if not isinstance(authenticated_user_id, str) or not authenticated_user_id.strip():
         raise StoryClaimDenied('claim denied')
-    if not isinstance(player_id, str) or not player_id.startswith('vc_'):
+    if not isinstance(player_id, str) or _ANONYMOUS_ID_PATTERN.fullmatch(player_id) is None:
         raise StoryClaimDenied('claim denied')
     try:
         credential_digest(claim_credential)
