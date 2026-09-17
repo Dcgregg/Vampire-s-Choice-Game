@@ -32,10 +32,16 @@ def _validate_initial_save(initial_save: Mapping[str, Any], now: str) -> None:
                    for key, value in content_versions.items())
             or not isinstance(state, Mapping)):
         raise ValueError('invalid initial save envelope')
-    # A newly issued identity cannot start with client- or factory-provided
-    # rewards. Trusted account grants are a separate, server-owned operation.
-    if (state.get('bloodCoins', 0) != 0 or state.get('achievements', {}) != {}
-            or state.get('dailyStreak', 0) != 0):
+    # Reject malformed reward types as well as nonzero rewards: bool compares
+    # equal to zero in Python, and an empty list compares equal to an empty dict.
+    if (type(state.get('bloodCoins', 0)) is not int
+            or state.get('bloodCoins', 0) != 0
+            or type(state.get('achievements', {})) is not dict
+            or state.get('achievements', {}) != {}
+            or type(state.get('dailyStreak', 0)) is not int
+            or state.get('dailyStreak', 0) != 0
+            or type(state.get('lastLoginDate', '')) is not str
+            or state.get('lastLoginDate', '') != ''):
         raise ValueError('initial anonymous save must not contain rewards')
 
 
