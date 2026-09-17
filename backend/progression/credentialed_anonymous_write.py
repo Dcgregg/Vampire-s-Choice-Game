@@ -7,10 +7,14 @@ trusted. A claim or credential rotation racing the write fails its CAS filter.
 from __future__ import annotations
 
 from copy import deepcopy
+import re
 from typing import Any, Mapping
 
 from .anonymous_claim_proof import verify_claim_credential
 from .story_only_transfer import InvalidStoryTransfer, story_only_player_state
+
+
+_PLAYER_ID = re.compile(r'vc_[A-Za-z0-9_-]{8,64}\Z')
 
 
 class AnonymousWriteDenied(Exception):
@@ -26,8 +30,8 @@ async def write_credentialed_anonymous_save(
     expected_revision: int, player_state: Mapping[str, Any], now: str,
 ) -> dict:
     """CAS-update an unclaimed save's story without accepting reward fields."""
-    if (not isinstance(player_id, str) or not player_id.startswith('vc_')
-            or len(player_id) > 67 or not isinstance(now, str) or not now):
+    if (not isinstance(player_id, str) or _PLAYER_ID.fullmatch(player_id) is None
+            or not isinstance(now, str) or not now):
         raise AnonymousWriteDenied('anonymous write denied')
     if type(expected_revision) is not int or expected_revision < 1:
         raise AnonymousWriteConflict('invalid anonymous revision')
