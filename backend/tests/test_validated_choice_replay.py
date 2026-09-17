@@ -4,7 +4,7 @@ from copy import deepcopy
 import pytest
 
 from progression.choice_checkpoint_guard import CheckpointConflict
-from progression.strict_event_input import StrictChoiceEvent
+from progression.trusted_content import InvalidChoice
 from progression.validated_choice_replay import replay_nonterminal_choices
 from test_choice_checkpoint_guard import event, ledger, registry
 
@@ -40,9 +40,7 @@ def test_replays_only_reachable_choices_from_trusted_checkpoint():
 def test_fails_closed_on_forged_or_unsupported_history(choices):
     source = ledger()
     original = deepcopy(source)
-    with pytest.raises(CheckpointConflict, match='|'.join([
-        'choice', 'revision', 'duplicate', 'version', 'terminal', 'achievement',
-    ])) if False else pytest.raises((CheckpointConflict, ValueError)):
+    with pytest.raises((CheckpointConflict, InvalidChoice)):
         replay_nonterminal_choices(registry(), source, choices)
     assert source == original
 
