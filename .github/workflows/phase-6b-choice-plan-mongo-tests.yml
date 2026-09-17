@@ -1,0 +1,44 @@
+name: Phase 6B choice plan Mongo tests
+
+on:
+  push:
+    branches: [phase-6b-trusted-progression]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  choice-plan-mongo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TEST_MONGO_URI: mongodb://127.0.0.1:27017/?replicaSet=rs0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Start disposable MongoDB replica set
+        run: |
+          docker run --detach --name phase6b-choice-mongo --publish 127.0.0.1:27017:27017 mongo:7 --replSet rs0 --bind_ip_all
+          for attempt in $(seq 1 40); do
+            if docker exec phase6b-choice-mongo mongosh --quiet --eval 'db.adminCommand({ ping: 1 })' >/dev/null 2>&1; then break; fi
+            sleep 2
+          done
+          docker exec phase6b-choice-mongo mongosh --quiet --eval 'rs.initiate({_id: "rs0", members: [{_id: 0, host: "localhost:27017"}]})'
+          for attempt in $(seq 1 40); do
+            if docker exec phase6b-choice-mongo mongosh --quiet --eval 'db.hello().isWritablePrimary' | grep -q true; then exit 0; fi
+            sleep 2
+          done
+          echo 'Disposable MongoDB replica set did not elect a primary' >&2
+          exit 1
+      - name: Install test dependencies
+        run: python -m pip install -r backend/requirements.txt pytest pytest-asyncio
+      - name: Test trusted choice plan through transactional reservation
+        working-directory: backend
+        run: python -m pytest -q -rx tests/test_trusted_choice_reservation_mongo_integration.py
