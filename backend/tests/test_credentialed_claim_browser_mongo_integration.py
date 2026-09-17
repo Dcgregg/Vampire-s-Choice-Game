@@ -4,6 +4,7 @@ Run only with TEST_MONGO_URI pointing to a disposable transaction-capable replic
 The test-only authenticated identity is not a production login implementation.
 """
 import asyncio
+import json
 import socket
 
 import pytest
@@ -26,15 +27,17 @@ async def test_chromium_issuance_to_claim_uses_disposable_mongo(collections):
     initial['playerState']['achievements'] = {}
     initial['playerState']['dailyStreak'] = 0
     initial['playerState']['lastLoginDate'] = ''
+    identity = {'user_id': 'browser-test-account'}
 
     async def test_identity():
-        return {'user_id': 'browser-test-account'}
+        return identity.copy()
 
     app = FastAPI()
     app.include_router(make_anonymous_credential_router(
         anonymous_saves, initial_save=lambda: initial, now=lambda: 'issued'))
     app.include_router(make_credentialed_story_claim_router(
         anonymous_saves, account_saves, current_user=test_identity, now=lambda: 'claimed'))
+
     @app.get('/test-only-browser-page')
     async def page():
         from fastapi.responses import HTMLResponse
@@ -74,10 +77,14 @@ async def test_chromium_issuance_to_claim_uses_disposable_mongo(collections):
                         method: 'POST', headers: {'Content-Type': 'application/json',
                             'X-Anonymous-Claim-Credential': claimCredential}, body: payload});
                     const claimedText = await claimed.text();
+                    const repeated = await fetch('/api/me/claim-story-with-credential', {
+                        method: 'POST', headers: {'Content-Type': 'application/json',
+                            'X-Anonymous-Claim-Credential': claimCredential}, body: payload});
                     return {issuedStatus: issued.status, issuedCache: issued.headers.get('cache-control'),
                         wrongStatus: wrong.status, claimStatus: claimed.status,
                         claimCache: claimed.headers.get('cache-control'), save,
-                        credential: claimCredential, claimedText};
+                        credential: claimCredential, claimedText,
+                        repeatedStatus: repeated.status, repeatedText: await repeated.text()};
                 }''')
                 assert result['issuedStatus'] == 201
                 assert result['issuedCache'] == 'no-store'
@@ -86,16 +93,38 @@ async def test_chromium_issuance_to_claim_uses_disposable_mongo(collections):
                 assert result['claimCache'] == 'no-store'
                 assert result['save']['playerId'].startswith('vc_')
                 assert result['credential'] not in result['claimedText']
-                import json
                 claimed = json.loads(result['claimedText'])
                 assert claimed['playerState']['progress'] == result['save']['playerState']['progress']
                 assert claimed['playerState']['bloodCoins'] == 0
                 assert claimed['playerState']['achievements'] == {}
                 assert 'claimCredentialDigest' not in result['claimedText']
+                assert result['repeatedStatus'] == 200
+                assert json.loads(result['repeatedText']) == claimed
                 assert await account_saves.count_documents({'userId': 'browser-test-account'}) == 1
                 stored = await anonymous_saves.find_one({'playerId': result['save']['playerId']})
                 assert stored['claimedBy'] == 'browser-test-account'
                 assert stored['claimCredentialDigest'] != result['credential']
+
+                # Switch only the injected test identity; the browser still has the real
+                # credential. The claimed story must not transfer to a second account.
+                identity['user_id'] = 'browser-second-account'
+                denied = await page.evaluate('''async ({playerId, revision, credential}) => {
+                    const response = await fetch('/api/me/claim-story-with-credential', {
+                        method: 'POST', headers: {'Content-Type': 'application/json',
+                            'X-Anonymous-Claim-Credential': credential},
+                        body: JSON.stringify({playerId, expectedAnonymousRevision: revision})});
+                    return {status: response.status, cache: response.headers.get('cache-control'),
+                        text: await response.text()};
+                }''', {'playerId': result['save']['playerId'],
+                       'revision': result['save']['revision'],
+                       'credential': result['credential']})
+                assert denied['status'] == 403
+                assert denied['cache'] == 'no-store'
+                assert result['credential'] not in denied['text']
+                assert await account_saves.count_documents({'userId': 'browser-second-account'}) == 0
+                assert await account_saves.count_documents({'userId': 'browser-test-account'}) == 1
+                assert (await anonymous_saves.find_one(
+                    {'playerId': result['save']['playerId']}))['claimedBy'] == 'browser-test-account'
             finally:
                 await browser.close()
     finally:
