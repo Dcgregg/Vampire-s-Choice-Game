@@ -1,8 +1,8 @@
-import { getSave } from '../sync/cloudClient';
+import { getSave, type CloudSave } from '../sync/cloudClient';
 import { claimStoryOnly } from '../sync/storyClaimClient';
 
 export type StoryOnlyLinkOutcome =
-  | { kind: 'claimed'; save: Awaited<ReturnType<typeof claimStoryOnly>> extends infer _T ? any : never }
+  | { kind: 'claimed'; save: CloudSave }
   | { kind: 'no_anonymous_cloud_save' }
   | { kind: 'account_conflict'; reason?: string }
   | { kind: 'denied' | 'unauthenticated' | 'invalid_request' | 'unavailable' };
@@ -15,7 +15,7 @@ export type StoryOnlyLinkOutcome =
  * storage and never sends account identity or reward fields to the claim route.
  */
 export async function linkAnonymousStoryOnly(playerId: string): Promise<StoryOnlyLinkOutcome> {
-  let anonymous;
+  let anonymous: CloudSave | null;
   try {
     anonymous = await getSave(playerId);
   } catch {
