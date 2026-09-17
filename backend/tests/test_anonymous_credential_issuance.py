@@ -82,8 +82,14 @@ async def test_invalid_input_does_not_write():
     {'contentVersions': []},
     {'playerState': []},
     {'playerState': {'bloodCoins': 50}},
+    {'playerState': {'bloodCoins': False}},
+    {'playerState': {'bloodCoins': '0'}},
     {'playerState': {'achievements': {'first': True}}},
+    {'playerState': {'achievements': []}},
     {'playerState': {'dailyStreak': 1}},
+    {'playerState': {'dailyStreak': False}},
+    {'playerState': {'lastLoginDate': '2026-09-17'}},
+    {'playerState': {'lastLoginDate': None}},
 ])
 async def test_bad_initial_envelope_fails_before_insert(bad):
     saves = Saves()
