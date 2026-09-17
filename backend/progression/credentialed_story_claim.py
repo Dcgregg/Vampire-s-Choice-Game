@@ -40,9 +40,8 @@ async def claim_story_with_credential(
         credential_digest(claim_credential)
     except InvalidClaimProof as exc:
         raise StoryClaimDenied('claim denied') from exc
-    if (type(expected_anonymous_revision) is not int or expected_anonymous_revision < 1
-            or not isinstance(now, str) or not now):
-        raise StoryClaimConflict('invalid claim revision or timestamp')
+    if not isinstance(now, str) or not now:
+        raise StoryClaimConflict('invalid claim timestamp')
     if anonymous_saves.database.client is not account_saves.database.client:
         raise StoryClaimConflict('claim collections must share one MongoDB client')
 
@@ -53,6 +52,9 @@ async def claim_story_with_credential(
                     anon = await anonymous_saves.find_one({'playerId': player_id}, session=session)
                     if anon is None or not verify_claim_credential(anon, claim_credential):
                         raise StoryClaimDenied('claim denied')
+                    # Revision details are visible only after transactional proof.
+                    if type(expected_anonymous_revision) is not int or expected_anonymous_revision < 1:
+                        raise StoryClaimConflict('invalid claim revision')
                     if anon.get('claimedBy') not in (None, authenticated_user_id):
                         raise StoryClaimDenied('claim denied')
                     if anon.get('revision') != expected_anonymous_revision:
