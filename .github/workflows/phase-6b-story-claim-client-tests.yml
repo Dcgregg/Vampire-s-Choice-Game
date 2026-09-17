@@ -1,0 +1,28 @@
+name: Phase 6B story claim client tests
+
+on:
+  push:
+    branches: [phase-6b-trusted-progression]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  story-claim-client:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: yarn
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+      - name: Type-check frontend
+        run: yarn lint
+      - name: Run story claim client contract tests
+        run: yarn test src/sync/__tests__/storyClaimClient.test.ts
