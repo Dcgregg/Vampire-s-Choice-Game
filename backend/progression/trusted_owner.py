@@ -25,7 +25,7 @@ def require_account_ledger_owner(ledger: Mapping[str, Any] | None, *, authentica
         raise ProgressionAccessDenied("ledger unavailable")
     if ledger.get("ownerType") != "account" or ledger.get("ownerId") != authenticated_user_id:
         raise ProgressionAccessDenied("ledger unavailable")
-    if any(ledger.get(field) is not None for field in ("mergedInto", "fencedAt", "claimedBy")):
+    if ledger.get("fenced") or any(ledger.get(field) is not None for field in ("mergedInto", "fencedAt", "claimedBy")):
         raise ProgressionAccessDenied("ledger unavailable")
     if type(ledger.get("progressionRevision")) is not int or ledger["progressionRevision"] < 0:
         raise ProgressionAccessDenied("ledger unavailable")
