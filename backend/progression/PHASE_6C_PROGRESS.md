@@ -55,21 +55,30 @@ Coverage includes:
 - The enabled startup path ensures the unique account-owner, event-ID and target-revision indexes before requests are served.
 - This branch does not set the activation variable in any deployment configuration, so live trusted progression remains off.
 
+## Completed secure slice: client queue and confirmed-state separation
+
+- Added a strict authenticated client for bootstrap and choice submission that rejects malformed authoritative responses and never sends browser-derived rewards or projections.
+- Added an account-scoped durable choice queue. It persists choice identity and base revision only; confirmed balances are never restored from mutable browser storage.
+- Offline choices are submitted serially with stable event IDs. Duplicate, conflict, indeterminate, logout-race and account-switch paths preserve pending intent without assuming an award.
+- The navigation boundary refuses to advance an authenticated trusted session when its choice cannot be safely queued.
+- The UI displays server-confirmed BloodCoins separately from the number of pending choices and explicitly states that pending choices add no assumed reward.
+- In an enabled account session, coin badges, character totals and trophy unlocks use only the in-memory server ledger; local browser-derived achievement banners are suppressed.
+- Client activation requires `VITE_TRUSTED_PROGRESSION_ROUTES` to exactly equal `enabled`; no build or deployment configuration on this branch sets it.
+
 ## Verification completed locally
 
 - production frontend build: passed;
 - TypeScript check: passed;
-- frontend tests: 120 passed;
+- frontend tests: 136 passed;
 - backend tests not requiring a separately running legacy API or disposable MongoDB: 355 passed, 119 service-dependent tests skipped locally;
 - all eight GitHub Actions workflows passed for both push and pull-request triggers after adding the authenticated choice-service duplicate, concurrency and recovery coverage;
 - disposable-Mongo ownership, opening-grant, story-separation and trusted-choice service tests passed without production credentials.
 
 ## Remaining player-ready gates
 
-1. Connect the client choice queue, retry/reconciliation and confirmed-versus-pending UI.
-2. Define and implement terminal, lifecycle and achievement-awarding transitions.
-3. Complete conflict, cancellation, account-switching, offline and second-device recovery UX.
-4. Pass real-login browser-to-API-to-disposable-Mongo tests, full regression tests, security review and explicit cutover approval.
+1. Define and implement terminal, lifecycle and achievement-awarding transitions.
+2. Complete conflict, cancellation, account-switching, offline and second-device recovery UX.
+3. Pass real-login browser-to-API-to-disposable-Mongo tests, full regression tests, security review and explicit cutover approval.
 
 ## Safety boundary
 

@@ -58,9 +58,21 @@ export interface PublicLedgerAchievement {
 
 /** The authoritative economy/achievement projection the client renders. */
 export interface PublicLedger {
-  ownerType: 'anon' | 'account';
+  ownerType: 'account';
   coins: { confirmed: number };
   achievements: { [achievementId: string]: PublicLedgerAchievement };
-  checkpoint: { bookId: string; currentSceneId: string };
+  checkpoint: {
+    bookId: string;
+    contentVersion: number;
+    currentSceneId: string;
+    terminal: boolean;
+  };
   progressionRevision: number;
+}
+
+/** Successful response from the authenticated choice endpoint. */
+export interface TrustedChoiceResponse {
+  eventId: string;
+  status: 'confirmed' | 'duplicate';
+  ledger: PublicLedger;
 }

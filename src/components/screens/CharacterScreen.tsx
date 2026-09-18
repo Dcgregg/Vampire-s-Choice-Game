@@ -1,9 +1,11 @@
 import React from 'react';
 import { useGameState } from '../../state/useGameState';
 import { User, Flame, Droplet, BookOpen, Key, Compass, Shield, Award } from 'lucide-react';
+import { useTrustedProgression } from '../../progression/useTrustedProgression';
 
 export const CharacterScreen: React.FC = () => {
   const { state, setScreen } = useGameState();
+  const trusted = useTrustedProgression();
   const player = state.player;
 
   if (!player) {
@@ -24,7 +26,11 @@ export const CharacterScreen: React.FC = () => {
 
   // Count active flags
   const flagsCount = Object.keys(state.flags).length;
-  const achievementsCount = Object.values(state.achievements).filter((a) => a.unlockedAt).length;
+  const trustedAccount = trusted.enabled && trusted.accountActive;
+  const achievementsCount = trustedAccount
+    ? Object.keys(trusted.confirmedAchievements || {}).length
+    : Object.values(state.achievements).filter((a) => a.unlockedAt).length;
+  const displayedCoins = trustedAccount ? trusted.confirmedCoins ?? '—' : state.bloodCoins;
 
   return (
     <div className="mx-auto max-w-lg px-4 py-6 pb-24 space-y-5">
@@ -55,9 +61,11 @@ export const CharacterScreen: React.FC = () => {
           <div className="rounded-xl border border-rose-900/40 bg-rose-950/20 p-2.5">
             <div className="flex items-center justify-center gap-1.5 text-xs text-rose-300">
               <Droplet className="w-3.5 h-3.5 fill-rose-600 text-rose-500" />
-              <span className="font-semibold text-white">{state.bloodCoins}</span>
+              <span className="font-semibold text-white">{displayedCoins}</span>
             </div>
-            <span className="text-[10px] text-stone-400 mt-0.5 block">Blood Coins</span>
+            <span className="text-[10px] text-stone-400 mt-0.5 block">
+              {trustedAccount ? 'Confirmed Blood Coins' : 'Blood Coins'}
+            </span>
           </div>
 
           <div className="rounded-xl border border-amber-900/40 bg-amber-950/20 p-2.5">

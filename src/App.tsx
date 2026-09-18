@@ -6,6 +6,7 @@ import { AchievementBanner } from './components/common/AchievementBanner';
 import { ConsequenceToast } from './components/common/ConsequenceToast';
 import { OfflineIndicator } from './components/common/OfflineIndicator';
 import { AccountBar } from './components/common/AccountBar';
+import { TrustedProgressionStatus } from './components/common/TrustedProgressionStatus';
 
 import { LandingScreen } from './components/screens/LandingScreen';
 import { CharacterCreationScreen } from './components/screens/CharacterCreationScreen';
@@ -25,6 +26,7 @@ const MainContent: React.FC = () => {
       <Navbar />
       <AccountBar />
       <OfflineIndicator />
+      <TrustedProgressionStatus />
       <AchievementBanner />
       <ConsequenceToast />
 

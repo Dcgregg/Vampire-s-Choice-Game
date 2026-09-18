@@ -21,6 +21,7 @@ import {
   EngineEvent,
 } from '../engine';
 import { syncManager } from '../sync/syncManager';
+import { trustedProgressionQueue } from '../progression/trustedProgressionQueue';
 
 // Re-exported for backwards compatibility with existing imports.
 export { updateRelationshipStatus };
@@ -196,6 +197,15 @@ export class GameStateManager {
 
     // A choice whose conditions are not satisfied is not executable.
     if (!result.ok) return;
+
+    const bookId = this.state.progress.currentBookId;
+    const contentVersion = this.state.contentVersions?.[bookId];
+    if (!trustedProgressionQueue.recordChoice({
+      bookId,
+      contentVersion: contentVersion ?? -1,
+      fromSceneId: this.state.progress.currentSceneId,
+      choiceId: choice.id,
+    })) return;
 
     gothicAudio.playChoiceChime();
     this.state = result.state;
