@@ -39,6 +39,14 @@ Coverage includes:
 - Disposable-Mongo coverage proves that credential-protected legacy story claiming preserves narrative progress while stripping client rewards, and that later tampering with compatibility save rewards cannot change the trusted ledger.
 - The bootstrap and story-claim routes remain unregistered; live players and production data are unchanged.
 
+## Completed secure slice: authenticated choice service recovery coverage
+
+- Added disposable-Mongo end-to-end coverage through the authenticated choice service, durable reservation adapter and transaction-backed ledger.
+- Identical retries return the authoritative ledger without applying the award twice, while a reused event ID with changed intent fails closed.
+- Concurrent identical requests can apply only once; concurrent different events can reserve the next ledger revision only once.
+- A retry after a commit-before-finalisation crash reconciles from durable attribution, and an active unknown outcome remains indeterminate until its lease safely expires.
+- This coverage does not register the experimental route or enable trusted progression for live players.
+
 ## Verification completed locally
 
 - production frontend build: passed;
@@ -49,12 +57,11 @@ Coverage includes:
 
 ## Remaining player-ready gates
 
-1. Add disposable-Mongo end-to-end tests for the authenticated choice service duplicate, concurrency and ambiguous-recovery paths.
-2. Register routes only behind an explicit disabled-by-default feature flag.
-3. Connect the client choice queue, retry/reconciliation and confirmed-versus-pending UI.
-4. Define and implement terminal, lifecycle and achievement-awarding transitions.
-5. Complete conflict, cancellation, account-switching, offline and second-device recovery UX.
-6. Pass real-login browser-to-API-to-disposable-Mongo tests, full regression tests, security review and explicit cutover approval.
+1. Register routes only behind an explicit disabled-by-default feature flag.
+2. Connect the client choice queue, retry/reconciliation and confirmed-versus-pending UI.
+3. Define and implement terminal, lifecycle and achievement-awarding transitions.
+4. Complete conflict, cancellation, account-switching, offline and second-device recovery UX.
+5. Pass real-login browser-to-API-to-disposable-Mongo tests, full regression tests, security review and explicit cutover approval.
 
 ## Safety boundary
 
