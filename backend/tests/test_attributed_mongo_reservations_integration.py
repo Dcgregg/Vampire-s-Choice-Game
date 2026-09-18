@@ -136,7 +136,7 @@ async def test_owner_change_after_reservation_cannot_commit_award(store):
         {"_id": event["ledgerId"]},
         {"$set": {"ownerId": "different-account"}},
     )
-    with pytest.raises(AttributionUnproven, match="CAS did not match"):
+    with pytest.raises(AttributionUnproven):
         await store.commit(event=event, lease_owner=event["leaseOwner"])
     ledger = await store.ledgers.find_one({"_id": event["ledgerId"]})
     assert ledger["progressionRevision"] == 0

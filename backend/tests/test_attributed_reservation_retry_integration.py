@@ -68,7 +68,9 @@ async def test_changed_retry_intent_is_rejected_without_rewriting_reservation(ca
         retry["expected_checkpoint"] = {**args["expected_checkpoint"], "contentVersion": 2}
     else:
         retry["expected_owner_id"] = "different-account"
-    with pytest.raises(ReservationInvariantError, match="event_id_reserved_intent_mismatch"):
+    expected_error = ("event_id_owner_mismatch" if changed == "expected_owner_id"
+                      else "event_id_reserved_intent_mismatch")
+    with pytest.raises(ReservationInvariantError, match=expected_error):
         await store.reserve(**retry)
     persisted = await store.events.find_one({"_id": event["_id"]})
     assert persisted["awards"] == args["awards"]
