@@ -21,7 +21,7 @@ def test_second_choice_uses_durable_first_result_and_rejects_prior_event_id():
     )
     assert original == before
     assert first["base_revision"] == 3
-    assert first["awards"] == {"coins": 10}
+    assert first["awards"] == {"coins": 10, "achievements": []}
     # Simulate only the durable fields that the attributed adapter would write.
     # This is NOT a substitute for a Mongo transaction/integration test.
     committed = {
@@ -38,7 +38,7 @@ def test_second_choice_uses_durable_first_result_and_rejects_prior_event_id():
     )
     assert second["base_revision"] == 4
     assert second["expected_checkpoint"] == committed["checkpoint"]
-    assert second["awards"] == {"coins": 500}
+    assert second["awards"] == {"coins": 500, "achievements": []}
     assert second["next_projection"]["coins"]["confirmed"] == 530
     assert committed["coins"]["confirmed"] == 30
     with pytest.raises(CheckpointConflict, match="already attributed"):

@@ -42,6 +42,17 @@ async def test_missing_owner_index_refuses_grant(ledgers):
 
 
 @pytest.mark.asyncio
+async def test_existing_document_does_not_bypass_missing_unique_index(ledgers):
+    await ledgers.insert_one({
+        "_id": "existing", "ownerType": "account", "ownerId": "account-one",
+        "coins": {"confirmed": 50}, "openingGranted": True,
+    })
+    with pytest.raises(InvalidCleanLedger, match="unique account owner index required"):
+        await attempt(ledgers)
+    assert await ledgers.count_documents({}) == 1
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("index_options", [{}, {"unique": True, "sparse": True},
                                          {"unique": True, "partialFilterExpression": {"ownerType": "account"}}])
 async def test_nonunique_or_incomplete_owner_index_refuses_grant(ledgers, index_options):

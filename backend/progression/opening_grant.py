@@ -44,14 +44,15 @@ async def initialize_granted_account_ledger(
     """
     if not isinstance(owner_id, str) or not owner_id.strip():
         raise InvalidCleanLedger("missing authenticated account owner")
+    await _require_unique_owner_index(ledgers)
     query = {"ownerType": "account", "ownerId": owner_id}
     existing = await ledgers.find_one(query)
     if existing is not None:
         return deepcopy(existing)
-    await _require_unique_owner_index(ledgers)
     seed = clean_seed(registry, owner_id=owner_id, book_id=book_id,
                       content_version=content_version, scene_id=scene_id)
     seed["coins"] = {"confirmed": OPENING_BLOOD_COINS}
+    seed["derived"]["coins"] = OPENING_BLOOD_COINS
     seed["openingGranted"] = True
     try:
         await ledgers.insert_one(deepcopy(seed))

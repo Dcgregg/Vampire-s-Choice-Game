@@ -10,7 +10,7 @@ import pytest
 from motor.motor_asyncio import AsyncIOMotorClient
 
 from progression.attributed_mongo_reservations import AttributedMongoReservationStore
-from progression.mongo_reservations import ReservationInvariantError
+from progression.mongo_reservations import ProgressionConflict, ReservationInvariantError
 from progression.trusted_choice_reservation import plan_account_choice_reservation
 from test_choice_checkpoint_guard import event, registry
 
@@ -66,6 +66,50 @@ async def test_server_planned_choice_commits_once_and_replay_cannot_award_again(
         assert unchanged['progressionRevision'] == 4
         assert unchanged['appliedEventIds']['4'] == choice.eventId
         assert await db.events.count_documents({'ledgerId': ledger_id, 'eventId': choice.eventId}) == 1
+    finally:
+        await client.drop_database(db.name)
+        client.close()
+
+
+@pytest.mark.asyncio
+async def test_owner_change_between_plan_and_reserve_cannot_create_reservation():
+    uri = os.environ.get('TEST_MONGO_URI')
+    if not uri:
+        pytest.skip('TEST_MONGO_URI required; never connect to production MongoDB')
+    client = AsyncIOMotorClient(uri, serverSelectionTimeoutMS=5000)
+    db = client['p6c_choice_owner_fence_' + uuid4().hex]
+    try:
+        await client.admin.command('ping')
+        store = AttributedMongoReservationStore(db.ledgers, db.events)
+        await store.ensure_indexes()
+        owner, ledger_id = 'account-' + uuid4().hex, uuid4().hex
+        await db.ledgers.insert_one({
+            '_id': ledger_id, 'ownerType': 'account', 'ownerId': owner,
+            'progressionRevision': 3,
+            'appliedEventIds': {'3': '550e8400-e29b-41d4-a716-446655440001'},
+            'checkpoint': {'bookId': 'book1', 'contentVersion': 1,
+                           'currentSceneId': 'start', 'terminal': False},
+            'coins': {'confirmed': 20}, 'achievements': {},
+            'derived': {'coins': 20, 'affinity': {'friend': 0},
+                        'flags': {}, 'achievements': []},
+        })
+        plan = plan_account_choice_reservation(
+            registry(), await db.ledgers.find_one({'_id': ledger_id}),
+            event(), authenticated_user_id=owner,
+        )
+        await db.ledgers.update_one(
+            {'_id': ledger_id}, {'$set': {'ownerId': 'different-account'}},
+        )
+        with pytest.raises(ProgressionConflict):
+            await store.reserve(**plan)
+        reserved = await db.events.find_one({
+            'ledgerId': ledger_id, 'eventId': plan['event_id'],
+        })
+        assert reserved['status'] == 'received'
+        assert 'targetRevision' not in reserved
+        ledger = await db.ledgers.find_one({'_id': ledger_id})
+        assert ledger['progressionRevision'] == 3
+        assert ledger['coins']['confirmed'] == 20
     finally:
         await client.drop_database(db.name)
         client.close()

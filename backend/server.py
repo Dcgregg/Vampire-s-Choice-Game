@@ -26,6 +26,13 @@ from pymongo.errors import DuplicateKeyError
 from pydantic import BaseModel, ConfigDict, Field
 import uuid
 
+from progression.feature_gated_routes import (
+    ensure_trusted_progression_indexes,
+    register_trusted_progression_routes,
+    trusted_progression_routes_enabled,
+)
+from progression.trusted_content import load_registry
+
 load_dotenv()
 
 MONGO_URL = os.environ["MONGO_URL"]
@@ -36,6 +43,10 @@ EMERGENT_SESSION_URL = os.environ.get(
     "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
 )
 SESSION_TTL_DAYS = 7
+TRUSTED_PROGRESSION_ACTIVATION = os.environ.get("TRUSTED_PROGRESSION_ROUTES")
+TRUSTED_PROGRESSION_ENABLED = trusted_progression_routes_enabled(
+    TRUSTED_PROGRESSION_ACTIVATION,
+)
 
 # Highest player-SAVE schema version this server understands (see frontend storage.ts).
 SUPPORTED_SAVE_SCHEMA_VERSIONS = {1, 2, 3}
@@ -48,6 +59,8 @@ saves = db["cloud_saves"]        # anonymous saves (weaker trust model)
 account_saves = db["account_saves"]  # account-owned saves (authenticated)
 users = db["users"]
 sessions = db["user_sessions"]
+progression_ledgers = db["progression_ledgers"]
+progression_events = db["progression_events"]
 
 app = FastAPI(title="Vampire's Choice Cloud Save API")
 
@@ -83,6 +96,11 @@ async def _ensure_indexes():
     await account_saves.create_index("userId", unique=True)
     await sessions.create_index("session_token", unique=True)
     await users.create_index("email", unique=True)
+    await ensure_trusted_progression_indexes(
+        activation_value=TRUSTED_PROGRESSION_ACTIVATION,
+        ledgers=progression_ledgers,
+        events=progression_events,
+    )
 
 
 # ---- Validation models (structure-only; nested detail stays flexible) ----
@@ -492,3 +510,16 @@ async def claim_save(request: Request, body: ClaimRequest):
 
 
 app.include_router(api)
+
+# Exact-token feature gate: the default and every unrecognised value leave
+# these routes absent. Registry loading also stays behind the gate so a normal
+# deployment retains the pre-Phase-6C startup surface.
+_trusted_registry = load_registry() if TRUSTED_PROGRESSION_ENABLED else None
+TRUSTED_PROGRESSION_ROUTES_REGISTERED = register_trusted_progression_routes(
+    app,
+    activation_value=TRUSTED_PROGRESSION_ACTIVATION,
+    current_user=_current_user,
+    ledgers=progression_ledgers,
+    events=progression_events,
+    registry=_trusted_registry,
+)

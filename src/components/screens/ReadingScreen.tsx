@@ -4,9 +4,11 @@ import { getSceneById } from '../../data/story';
 import { isChoiceAvailable, isParagraphVisible } from '../../engine';
 import { SceneChoice } from '../../types';
 import { Heart, AlertTriangle, Sparkles, ChevronRight, Bookmark, Type, Lock } from 'lucide-react';
+import { useTrustedProgression } from '../../progression/useTrustedProgression';
 
 export const ReadingScreen: React.FC = () => {
   const { state, makeChoice, interpolate, updateSettings } = useGameState();
+  const trusted = useTrustedProgression();
   const contentRef = useRef<HTMLDivElement>(null);
 
   const currentSceneId = state.progress.currentSceneId || 'b1_c1_s1';
@@ -199,6 +201,15 @@ export const ReadingScreen: React.FC = () => {
 
         {/* Choice Section */}
         <section className="mt-10 pt-6 border-t border-[#2a1b36]">
+          {trusted.enabled && trusted.accountActive && !trusted.canChoose && (
+            <p
+              data-testid="trusted-choice-blocked"
+              role="alert"
+              className="mb-4 rounded-xl border border-amber-800/60 bg-amber-950/30 px-4 py-3 text-center text-xs text-amber-100"
+            >
+              Choices are paused while your authoritative progress is reconciled. No pending reward has been added.
+            </p>
+          )}
           <div className="mb-4 flex items-center justify-center gap-2 text-center">
             <span className="h-[1px] w-8 bg-[#c5a059]/50" />
             <span className="font-interface text-xs font-bold uppercase tracking-widest text-[#fae092]">
@@ -211,7 +222,7 @@ export const ReadingScreen: React.FC = () => {
             {scene.choices.map((choice: SceneChoice) => {
               const isRomantic = choice.isRomantic;
               const isDangerous = choice.isDangerous;
-              const available = isChoiceAvailable(choice, state);
+              const available = isChoiceAvailable(choice, state) && trusted.canChoose;
 
               return (
                 <button

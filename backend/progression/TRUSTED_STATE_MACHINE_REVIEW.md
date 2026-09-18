@@ -1,5 +1,8 @@
 # Phase 6B trusted state-machine review (INERT)
 
+> Historical Phase 6B review. The implemented Phase 6C decisions and current
+> cutover boundary are recorded in `PHASE_6C_COMPLETION_REVIEW.md`.
+
 **Status:** an isolated, pure, nonterminal choice guard is implemented and tested; this is **not** approval to initialize ledgers, register an endpoint, schedule recovery, migrate saves, merge into `main`, or deploy. Read alongside `TRUSTED_API_CONTRACT_DRAFT.md`, `TRUSTED_API_ACCEPTANCE_MATRIX.md`, and `PHASE_6B_DECISION_RECORD_DRAFT.md`.
 
 ## Observed implementation boundary

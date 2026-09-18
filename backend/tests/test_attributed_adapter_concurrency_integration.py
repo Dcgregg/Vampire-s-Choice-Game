@@ -24,10 +24,11 @@ async def case():
         store = AttributedMongoReservationStore(db.ledgers, db.events)
         await store.ensure_indexes()
         ledger_id = uuid4().hex
+        owner_id = uuid4().hex
         checkpoint = {"bookId": "book1", "contentVersion": 1,
                       "currentSceneId": "start", "terminal": False}
         await db.ledgers.insert_one({
-            "_id": ledger_id, "ownerType": "account", "ownerId": uuid4().hex,
+            "_id": ledger_id, "ownerType": "account", "ownerId": owner_id,
             "progressionRevision": 0, "checkpoint": checkpoint,
             "appliedEventIds": {}, "coins": {"confirmed": 0},
             "achievements": {}, "derived": {},
@@ -37,7 +38,8 @@ async def case():
             base_revision=0, awards={"coins": 10},
             next_projection={"coins": {"confirmed": 10}, "achievements": {},
                              "derived": {}, "checkpoint": {**checkpoint, "currentSceneId": "next"}},
-            expected_checkpoint=checkpoint,
+            expected_checkpoint=checkpoint, expected_owner_type="account",
+            expected_owner_id=owner_id,
         )
         yield store, event
     finally:
@@ -131,6 +133,8 @@ async def test_distinct_event_ids_cannot_reserve_or_award_same_revision(case):
             payload_hash="other-digest", base_revision=0,
             awards={"coins": 99}, next_projection=second_projection,
             expected_checkpoint=checkpoint,
+            expected_owner_type=first["expectedOwnerType"],
+            expected_owner_id=first["expectedOwnerId"],
         )
     await store.commit(event=first, lease_owner=first["leaseOwner"])
     applied = await store.finalise(event=first, payload_hash="digest")
@@ -141,6 +145,8 @@ async def test_distinct_event_ids_cannot_reserve_or_award_same_revision(case):
             payload_hash="other-digest", base_revision=0,
             awards={"coins": 99}, next_projection=second_projection,
             expected_checkpoint=checkpoint,
+            expected_owner_type=first["expectedOwnerType"],
+            expected_owner_id=first["expectedOwnerId"],
         )
     ledger = await store.ledgers.find_one({"_id": first["ledgerId"]})
     loser = await store.events.find_one({"ledgerId": first["ledgerId"], "eventId": second_id})

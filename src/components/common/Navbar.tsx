@@ -2,9 +2,14 @@ import React from 'react';
 import { useGameState } from '../../state/useGameState';
 import { PWAInstallButton } from './PWAInstallButton';
 import { Volume2, VolumeX, Flame, Droplet } from 'lucide-react';
+import { useTrustedProgression } from '../../progression/useTrustedProgression';
 
 export const Navbar: React.FC = () => {
   const { state, updateSettings, activeScreen, setScreen } = useGameState();
+  const trusted = useTrustedProgression();
+  const displayedCoins = trusted.enabled && trusted.accountActive
+    ? trusted.confirmedCoins ?? '—'
+    : state.bloodCoins;
 
   const toggleSound = () => {
     updateSettings({ ambientAudio: !state.settings.ambientAudio });
@@ -38,10 +43,12 @@ export const Navbar: React.FC = () => {
           <div
             id="blood-coins-badge"
             className="flex items-center gap-1.5 rounded-full border border-rose-900/40 bg-rose-950/40 px-2.5 py-1 text-xs text-rose-200"
-            title="Blood Coins — Earned through discovery and chapter completion"
+            title={trusted.enabled && trusted.accountActive
+              ? 'Server-confirmed BloodCoins — pending choices never increase this balance'
+              : 'Blood Coins — Earned through discovery and chapter completion'}
           >
             <Droplet className="h-3.5 w-3.5 fill-rose-600 text-rose-500 animate-pulse" />
-            <span className="font-interface font-semibold text-rose-100">{state.bloodCoins}</span>
+            <span className="font-interface font-semibold text-rose-100">{displayedCoins}</span>
           </div>
 
           {/* Daily Streak */}

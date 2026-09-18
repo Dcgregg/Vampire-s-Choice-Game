@@ -4,6 +4,11 @@ import { syncManager } from '../sync/syncManager';
 import {
   exchangeSession, getMe, logoutApi, claimSave, getAccountSave, PublicUser, CloudSave,
 } from '../sync/cloudClient';
+import { TRUSTED_PROGRESSION_ENABLED } from '../sync/config';
+import {
+  accountQueueScope,
+  trustedProgressionQueue,
+} from '../progression/trustedProgressionQueue';
 
 interface ClaimConflict { accountSave: CloudSave; anonymousSave: any; playerId: string; }
 type LinkError = 'link_failed' | 'resolve_failed';
@@ -35,7 +40,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [resolving, setResolving] = useState(false);
   const processed = useRef(false);
 
-  const linkProgress = useCallback(async () => {
+  const activateTrustedProgression = useCallback(async (account: PublicUser) => {
+    if (!TRUSTED_PROGRESSION_ENABLED) return;
+    try {
+      const scope = await accountQueueScope(account.email);
+      await trustedProgressionQueue.enterAccount(scope);
+    } catch {
+      trustedProgressionQueue.blockAccountActivation();
+    }
+  }, []);
+
+  const linkProgress = useCallback(async (account: PublicUser) => {
     const playerId = syncManager.getPlayerId();
     let res;
     try {
@@ -45,7 +60,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setError('link_failed');
       return;
     }
-    if (res.ok) { setError(null); syncManager.enterAccountMode(res.save); return; }
+    if (res.ok) {
+      setError(null);
+      syncManager.enterAccountMode(res.save);
+      await activateTrustedProgression(account);
+      return;
+    }
     if ('conflict' in res && res.conflict) {
       setError(null);
       setConflict({ accountSave: res.accountSave, anonymousSave: res.anonymousSave, playerId });
@@ -56,11 +76,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const acct = await getAccountSave().catch(() => null);
       setError(null);
       syncManager.enterAccountMode(acct);
+      await activateTrustedProgression(account);
       return;
     }
     // Any other failure: DO NOT treat as a successful link. Remain anonymous.
     setError('link_failed');
-  }, []);
+  }, [activateTrustedProgression]);
 
   const resolveConflict = useCallback(async (strategy: 'use_account' | 'use_anonymous') => {
     if (!conflict || resolving) return;
@@ -75,15 +96,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
     setResolving(false);
-    if (res.ok) { setError(null); setConflict(null); syncManager.enterAccountMode(res.save); return; }
+    if (res.ok) {
+      setError(null);
+      setConflict(null);
+      syncManager.enterAccountMode(res.save);
+      if (user) await activateTrustedProgression(user);
+      return;
+    }
     // Resolution failed (e.g. account changed concurrently): keep the dialog open.
     setError('resolve_failed');
-  }, [conflict, resolving]);
+  }, [activateTrustedProgression, conflict, resolving, user]);
 
   const retryLink = useCallback(async () => {
     setError(null);
-    await linkProgress();
-  }, [linkProgress]);
+    if (user) await linkProgress(user);
+  }, [linkProgress, user]);
 
   const dismissError = useCallback(() => setError(null), []);
 
@@ -100,14 +127,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           try {
             const u = await exchangeSession(sid);
             setUser(u);
-            await linkProgress();
+            await linkProgress(u);
           } catch { /* fall through to unauthenticated */ }
         }
         setLoading(false);
         return;
       }
       const me = await getMe();
-      if (me) { setUser(me); await linkProgress(); }
+      if (me) { setUser(me); await linkProgress(me); }
       setLoading(false);
     };
     void run();
@@ -121,6 +148,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = useCallback(async () => {
     await logoutApi();
+    trustedProgressionQueue.leaveAccount();
     syncManager.exitAccountMode();
     setUser(null);
     setError(null);
