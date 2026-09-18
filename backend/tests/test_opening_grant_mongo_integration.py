@@ -74,7 +74,7 @@ async def test_first_trusted_choice_can_plan_from_granted_balance(ledgers):
     plan = plan_account_choice_reservation(
         registry(), granted, choice, authenticated_user_id="account-one",
     )
-    assert plan["awards"] == {"coins": 10}
+    assert plan["awards"] == {"coins": 10, "achievements": []}
     assert plan["next_projection"]["coins"] == {"confirmed": 60}
     assert plan["next_projection"]["derived"]["coins"] == 60
 
