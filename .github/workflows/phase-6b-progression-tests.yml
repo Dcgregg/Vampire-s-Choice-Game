@@ -1,0 +1,67 @@
+name: Phase 6B progression tests
+
+on:
+  push:
+    branches: [phase-6b-trusted-progression]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  progression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TEST_MONGO_URI: mongodb://127.0.0.1:27017/?replicaSet=rs0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Start disposable single-node MongoDB replica set
+        run: |
+          docker run --detach --name phase6b-mongo --publish 127.0.0.1:27017:27017 mongo:7 --replSet rs0 --bind_ip_all
+          for attempt in $(seq 1 40); do
+            if docker exec phase6b-mongo mongosh --quiet --eval 'db.adminCommand({ ping: 1 })' >/dev/null 2>&1; then break; fi
+            sleep 2
+          done
+          docker exec phase6b-mongo mongosh --quiet --eval 'rs.initiate({_id: "rs0", members: [{_id: 0, host: "localhost:27017"}]})'
+          for attempt in $(seq 1 40); do
+            if docker exec phase6b-mongo mongosh --quiet --eval 'db.hello().isWritablePrimary' | grep -q true; then exit 0; fi
+            sleep 2
+          done
+          echo 'Disposable MongoDB replica set did not elect a primary' >&2
+          exit 1
+      - name: Install test dependencies
+        run: python -m pip install -r backend/requirements.txt pytest pytest-asyncio httpx
+      - name: Verify disposable MongoDB transaction support
+        run: |
+          python - <<'PY'
+          import asyncio
+          import os
+          from uuid import uuid4
+          from motor.motor_asyncio import AsyncIOMotorClient
+
+          async def check():
+              client = AsyncIOMotorClient(os.environ['TEST_MONGO_URI'], serverSelectionTimeoutMS=10000)
+              name = 'phase6b_txn_probe_' + uuid4().hex
+              try:
+                  async with await client.start_session() as session:
+                      async with session.start_transaction():
+                          await client[name].probe.insert_one({'transaction': 'supported'}, session=session)
+                  assert await client[name].probe.count_documents({}) == 1
+                  print('Disposable MongoDB transaction committed successfully')
+              finally:
+                  await client.drop_database(name)
+                  client.close()
+
+          asyncio.run(check())
+          PY
+      - name: Run Phase 6B tests (no production credentials)
+        working-directory: backend
+        run: python -m pytest -q -rx tests/test_reducer_parity.py tests/test_progression_reservations.py tests/test_mongo_reservations.py tests/test_mongo_reservations_integration.py tests/test_mongo_reservations_faults.py tests/test_mongo_reservations_lease_interleaving.py tests/test_mongo_transaction_fence_probe.py tests/test_mongo_commit_strict_fencing.py tests/test_mongo_checkpoint_pin_fence.py tests/test_recovery_sweep_integration.py tests/test_attributed_recovery_sweep_integration.py tests/test_recovery_sweep_failure_policy.py tests/test_mongo_recovery_concurrency.py tests/test_strict_event_input.py tests/test_choice_checkpoint_guard.py tests/test_validated_choice_replay.py tests/test_validated_choice_replay_continuity.py tests/test_canonical_event.py tests/test_clean_ledger.py tests/test_clean_initializer.py tests/test_clean_initializer_mongo_integration.py tests/test_mongo_attribution_blocker.py tests/test_attributed_ledger_write_integration.py tests/test_attributed_finalisation_integration.py tests/test_attributed_finalisation_race_integration.py tests/test_attributed_mongo_reservations_integration.py tests/test_attributed_adapter_concurrency_integration.py tests/test_attributed_adapter_lease_faults_integration.py tests/test_attributed_reservation_retry_integration.py tests/test_trusted_owner.py tests/test_trusted_choice_reservation.py tests/test_story_only_transfer.py tests/test_story_claim_mongo_integration.py tests/test_story_claim_transaction_integration.py tests/test_credentialed_story_claim_integration.py tests/test_credentialed_claim_http_mongo_integration.py tests/test_credentialed_claim_fencing_integration.py tests/test_credentialed_claim_null_owner_integration.py tests/test_credentialed_anonymous_write_integration.py tests/test_credentialed_anonymous_read_integration.py tests/test_credentialed_write_claim_chain_integration.py

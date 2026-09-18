@@ -1,0 +1,28 @@
+name: Phase 6B choice reservation tests
+
+on:
+  push:
+    branches: [phase-6b-trusted-progression]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  choice-reservation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install test dependencies
+        run: python -m pip install -r backend/requirements.txt pytest
+      - name: Verify pure choice reservation boundary
+        working-directory: backend
+        run: python -m pytest -q -rx tests/test_choice_checkpoint_guard.py tests/test_trusted_owner.py tests/test_trusted_choice_reservation.py tests/test_trusted_choice_reservation_chain.py
