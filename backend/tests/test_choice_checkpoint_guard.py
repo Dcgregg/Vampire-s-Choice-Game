@@ -2,6 +2,7 @@
 from copy import deepcopy
 
 import pytest
+from bson.int64 import Int64
 
 from progression.choice_checkpoint_guard import (
     CheckpointConflict, prepare_choice, prepare_lifecycle,
@@ -149,6 +150,16 @@ def test_existing_matching_achievement_projection_is_preserved():
     assert proposal["nextProjection"]["achievements"] == before["achievements"]
     assert proposal["nextProjection"]["derived"]["achievements"] == ["badge"]
     assert proposal["awarded"] == []
+
+
+def test_mongo_int64_achievement_timestamp_remains_valid_after_roundtrip():
+    current = ledger()
+    current["achievements"] = {
+        "badge": {"unlockedAt": Int64(1_700_000_000_000), "source": "awarded"},
+    }
+    current["derived"]["achievements"] = ["badge"]
+    proposal = prepare_nonterminal_choice(registry(), current, event())
+    assert proposal["nextProjection"]["achievements"] == current["achievements"]
 
 
 @pytest.mark.parametrize("choice_id,exception", [

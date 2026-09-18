@@ -39,7 +39,9 @@ def _validated_base(ledger: Dict[str, Any], event: Any) -> tuple[dict, dict]:
     recorded = ledger["achievements"]
     valid_metadata = isinstance(recorded, dict) and all(
         isinstance(aid, str) and isinstance(meta, dict)
-        and type(meta.get("unlockedAt")) is int and meta["unlockedAt"] >= 0
+        and isinstance(meta.get("unlockedAt"), int)
+        and not isinstance(meta["unlockedAt"], bool)
+        and meta["unlockedAt"] >= 0
         and meta.get("source") in {"awarded", "imported"}
         for aid, meta in recorded.items()
     )
