@@ -4,7 +4,10 @@ from copy import deepcopy
 import pytest
 
 from progression.choice_checkpoint_guard import CheckpointConflict
-from progression.trusted_choice_reservation import plan_account_choice_reservation
+from progression.strict_event_input import StrictLifecycleEvent
+from progression.trusted_choice_reservation import (
+    plan_account_choice_reservation, plan_account_lifecycle_reservation,
+)
 from progression.trusted_content import InvalidChoice
 from progression.trusted_owner import ProgressionAccessDenied
 from test_choice_checkpoint_guard import event, ledger, registry
@@ -33,7 +36,7 @@ def test_valid_plan_is_derived_and_does_not_mutate_ledger():
     assert result["event_id"] == event().eventId
     assert len(result["payload_hash"]) == 64
     assert result["base_revision"] == 3
-    assert result["awards"] == {"coins": 10}
+    assert result["awards"] == {"coins": 10, "achievements": []}
     assert result["expected_checkpoint"] == before["checkpoint"]
     assert result["next_projection"]["coins"]["confirmed"] == 30
     result["next_projection"]["coins"]["confirmed"] = 999
@@ -65,12 +68,24 @@ def test_rejects_unowned_missing_or_corrupt_attribution(changes):
 
 @pytest.mark.parametrize("changes", [
     {"baseProgressionRevision": 2}, {"fromSceneId": "next"},
-    {"choiceId": "unknown"}, {"choiceId": "terminal"},
-    {"choiceId": "award"}, {"contentVersion": 2},
+    {"choiceId": "unknown"}, {"contentVersion": 2},
 ])
-def test_invalid_or_unsupported_choices_never_produce_reservation(changes):
+def test_invalid_choices_never_produce_reservation(changes):
     with pytest.raises((CheckpointConflict, InvalidChoice)):
         plan(owned_ledger(), event(**changes))
+
+
+def test_achievement_and_terminal_choices_produce_atomic_reservations():
+    award = plan_account_choice_reservation(
+        registry(), owned_ledger(), event(choiceId="award"),
+        authenticated_user_id="account-a", unlocked_at=456,
+    )
+    assert award["awards"] == {"coins": 0, "achievements": ["badge"]}
+    assert award["next_projection"]["achievements"]["badge"] == {
+        "unlockedAt": 456, "source": "awarded",
+    }
+    terminal = plan(owned_ledger(), event(choiceId="terminal"))
+    assert terminal["next_projection"]["checkpoint"]["terminal"] is True
 
 
 def test_unparsed_choice_payload_cannot_be_planned():
@@ -82,3 +97,28 @@ def test_unparsed_choice_payload_cannot_be_planned():
             authenticated_user_id="account-a",
         )
     assert current == before
+
+
+def test_character_created_plan_is_atomic_and_replay_scoped():
+    current = owned_ledger()
+    current["progressionRevision"] = 0
+    current["appliedEventIds"] = {}
+    current["lifecycleApplied"] = []
+    lifecycle = StrictLifecycleEvent(
+        kind="lifecycle", eventId=event().eventId, bookId="book1",
+        contentVersion=1, baseProgressionRevision=0,
+        lifecycleId="character_created",
+    )
+    result = plan_account_lifecycle_reservation(
+        registry(), current, lifecycle,
+        authenticated_user_id="account-a", unlocked_at=789,
+        opening_book_id="book1", opening_content_version=1,
+        opening_scene_id="start",
+    )
+    assert result["awards"] == {"coins": 0, "achievements": ["story_started"]}
+    assert result["next_projection"]["achievements"]["story_started"] == {
+        "unlockedAt": 789, "source": "awarded",
+    }
+    assert result["next_projection"]["lifecycleApplied"] == [
+        "book1:1:character_created",
+    ]

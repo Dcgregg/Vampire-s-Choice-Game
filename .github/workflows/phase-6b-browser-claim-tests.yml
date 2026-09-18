@@ -43,4 +43,4 @@ jobs:
           python -m playwright install --with-deps chromium
       - name: Run browser to API to disposable MongoDB test
         working-directory: backend
-        run: python -m pytest -q -rx tests/test_credentialed_claim_browser_mongo_integration.py
+        run: python -m pytest -q -rx tests/test_credentialed_claim_browser_mongo_integration.py tests/test_trusted_progression_browser_mongo_integration.py

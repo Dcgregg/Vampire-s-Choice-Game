@@ -3,7 +3,10 @@ from copy import deepcopy
 
 import pytest
 
-from progression.choice_checkpoint_guard import CheckpointConflict, prepare_nonterminal_choice
+from progression.choice_checkpoint_guard import (
+    CheckpointConflict, prepare_choice, prepare_lifecycle,
+    prepare_nonterminal_choice,
+)
 from progression.strict_event_input import StrictChoiceEvent, StrictLifecycleEvent
 from progression.trusted_content import InvalidChoice, UnknownContentVersion
 
@@ -16,7 +19,9 @@ def registry():
         "rules": {"affinityMin": -100, "affinityMax": 100, "coinsMin": 0,
                   "derivedAchievements": [
                       {"type": "affinityThreshold", "id": "friend_badge", "threshold": 5},
-                  ]},
+                  ], "lifecycleEvents": {
+                      "character_created": {"achievementId": "story_started"},
+                  }},
         "books": {"book1": {"version": 1, "scenes": {
             "start": {"choices": {
                 "ordinary": {"nextSceneId": "next", "effects": {"coinsChange": 10}},
@@ -136,7 +141,7 @@ def test_rejects_inconsistent_achievement_projection_without_mutation(recorded, 
 
 def test_existing_matching_achievement_projection_is_preserved():
     current = ledger()
-    current["achievements"] = {"badge": {"unlockedAt": "existing"}}
+    current["achievements"] = {"badge": {"unlockedAt": 123, "source": "awarded"}}
     current["derived"]["achievements"] = ["badge"]
     before = deepcopy(current)
     proposal = prepare_nonterminal_choice(registry(), current, event())
@@ -194,3 +199,39 @@ def test_rejects_lifecycle_event():
                                      lifecycleId="start")
     with pytest.raises(CheckpointConflict):
         prepare_nonterminal_choice(registry(), ledger(), lifecycle)
+
+
+def test_choice_award_writes_metadata_and_terminal_choice_completes_book():
+    awarded = prepare_choice(registry(), ledger(), event(choiceId="award"), unlocked_at=456)
+    assert awarded["awarded"] == ["badge"]
+    assert awarded["nextProjection"]["achievements"] == {
+        "badge": {"unlockedAt": 456, "source": "awarded"},
+    }
+    assert awarded["nextProjection"]["derived"]["achievements"] == ["badge"]
+
+    terminal = prepare_choice(registry(), ledger(), event(choiceId="terminal"), unlocked_at=456)
+    assert terminal["nextProjection"]["checkpoint"] == {
+        "bookId": "book1", "contentVersion": 1,
+        "currentSceneId": "end", "terminal": True,
+    }
+
+
+def test_character_created_lifecycle_is_opening_only_and_replay_marked():
+    current = ledger()
+    current["progressionRevision"] = 0
+    current["lifecycleApplied"] = []
+    lifecycle = StrictLifecycleEvent(
+        kind="lifecycle", eventId=UUID4, bookId="book1",
+        contentVersion=1, baseProgressionRevision=0,
+        lifecycleId="character_created",
+    )
+    proposal = prepare_lifecycle(
+        registry(), current, lifecycle, unlocked_at=789,
+        opening_book_id="book1", opening_content_version=1,
+        opening_scene_id="start",
+    )
+    assert proposal["awarded"] == ["story_started"]
+    assert proposal["nextProjection"]["lifecycleApplied"] == [
+        "book1:1:character_created",
+    ]
+    assert proposal["nextProjection"]["checkpoint"] == current["checkpoint"]

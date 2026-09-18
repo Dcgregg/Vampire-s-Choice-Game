@@ -157,6 +157,9 @@ export class GameStateManager {
     };
 
     this.unlockAchievement('THE_STORY_BEGINS');
+    // Trusted accounts independently award this from the server registry.
+    // Local story creation remains available; no reward is assumed here.
+    trustedProgressionQueue.recordLifecycle('character_created');
 
     this.activeScreen = 'reading';
     this.notify();

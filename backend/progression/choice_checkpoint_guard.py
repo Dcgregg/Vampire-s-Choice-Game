@@ -1,32 +1,21 @@
-"""Inert Phase 6B pure guard for ordinary, nonterminal choice events.
+"""Pure trusted-progression checkpoint guards.
 
-No route, database access, event deduplication, lifecycle awards or terminal
-transition is implemented here. The caller must load the ledger from a trusted
-store and resolve an existing event ID before invoking this function.
+The caller owns authentication, authoritative loading, event deduplication,
+transactional fencing and persistence. These functions only derive a proposed
+projection from trusted content and an already server-loaded ledger.
 """
 from copy import deepcopy
 from typing import Any, Dict
 
-from .reducer import apply_choice
+from .reducer import apply_choice, apply_lifecycle
 from .trusted_content import InvalidChoice, book_entry
 
 
 class CheckpointConflict(ValueError):
-    """The proposed choice cannot advance the supplied durable checkpoint."""
+    """The proposed event cannot advance the supplied durable checkpoint."""
 
 
-def prepare_nonterminal_choice(
-    registry: Dict[str, Any], ledger: Dict[str, Any], event: Any
-) -> Dict[str, Any]:
-    """Return a proposed next projection without modifying the input ledger.
-
-    ``event`` must be a strictly parsed choice event; ``ledger`` must be
-    server-loaded. The caller owns identity, deduplication, transactional
-    fencing and persistence. Achievement metadata and terminal transitions
-    are not yet specified, so choices that unlock achievements fail closed.
-    """
-    if event.kind != "choice":
-        raise CheckpointConflict("only ordinary choice events are supported")
+def _validated_base(ledger: Dict[str, Any], event: Any) -> tuple[dict, dict]:
     checkpoint = ledger["checkpoint"]
     if (ledger.get("fenced") or ledger.get("mergedInto") is not None
             or ledger.get("fencedAt") is not None or ledger.get("claimedBy") is not None
@@ -34,12 +23,12 @@ def prepare_nonterminal_choice(
         raise CheckpointConflict("ledger is fenced, claimed or checkpoint is terminal")
     if event.baseProgressionRevision != ledger["progressionRevision"]:
         raise CheckpointConflict("progression revision changed")
-    if event.bookId != checkpoint["bookId"] or event.fromSceneId != checkpoint["currentSceneId"]:
-        raise CheckpointConflict("choice does not match durable checkpoint")
+    if event.bookId != checkpoint["bookId"]:
+        raise CheckpointConflict("event does not match durable checkpoint")
     pinned_version = checkpoint.get("contentVersion")
     if (isinstance(pinned_version, bool) or not isinstance(pinned_version, int)
             or pinned_version <= 0 or event.contentVersion != pinned_version):
-        raise CheckpointConflict("choice does not match durable content version")
+        raise CheckpointConflict("event does not match durable content version")
     confirmed = ledger["coins"]["confirmed"]
     derived_coins = ledger["derived"]["coins"]
     if (isinstance(confirmed, bool) or not isinstance(confirmed, int) or confirmed < 0
@@ -48,35 +37,108 @@ def prepare_nonterminal_choice(
         raise CheckpointConflict("confirmed and derived coin balances disagree")
     unlocked = ledger["derived"]["achievements"]
     recorded = ledger["achievements"]
-    if (not isinstance(unlocked, list) or not isinstance(recorded, dict)
+    valid_metadata = isinstance(recorded, dict) and all(
+        isinstance(aid, str) and isinstance(meta, dict)
+        and type(meta.get("unlockedAt")) is int and meta["unlockedAt"] >= 0
+        and meta.get("source") in {"awarded", "imported"}
+        for aid, meta in recorded.items()
+    )
+    if (not isinstance(unlocked, list) or not valid_metadata
             or any(not isinstance(item, str) for item in unlocked)
             or len(unlocked) != len(set(unlocked)) or set(unlocked) != set(recorded)):
         raise CheckpointConflict("confirmed and derived achievements disagree")
+    return checkpoint, deepcopy(recorded)
 
+
+def prepare_choice(
+    registry: Dict[str, Any], ledger: Dict[str, Any], event: Any, *, unlocked_at: int,
+) -> Dict[str, Any]:
+    """Return an atomic choice projection, including awards and completion."""
+    if event.kind != "choice":
+        raise CheckpointConflict("choice event required")
+    if type(unlocked_at) is not int or unlocked_at < 0:
+        raise CheckpointConflict("valid server achievement timestamp required")
+    checkpoint, recorded = _validated_base(ledger, event)
+    if event.fromSceneId != checkpoint["currentSceneId"]:
+        raise CheckpointConflict("choice does not match durable checkpoint")
+    pinned_version = checkpoint["contentVersion"]
     book = book_entry(registry, event.bookId, pinned_version)
     derived = deepcopy(ledger["derived"])
     result = apply_choice(
         registry, derived, event.bookId, pinned_version,
         event.fromSceneId, event.choiceId,
     )
-    if result["endsBook"]:
-        raise CheckpointConflict("terminal choice transition is not specified")
-    if result["awarded"] or set(derived["achievements"]) != set(recorded):
-        raise CheckpointConflict("achievement ledger metadata is not specified")
+    for achievement_id in result["awarded"]:
+        recorded[achievement_id] = {"unlockedAt": unlocked_at, "source": "awarded"}
+    if set(derived["achievements"]) != set(recorded):
+        raise CheckpointConflict("achievement projection could not be attributed")
     next_scene = result["nextSceneId"]
     if not isinstance(next_scene, str) or next_scene not in book["scenes"]:
         raise InvalidChoice("choice destination is not a trusted scene")
-
     next_checkpoint = {
-        **deepcopy(checkpoint), "currentSceneId": next_scene, "terminal": False,
+        **deepcopy(checkpoint), "currentSceneId": next_scene,
+        "terminal": result["endsBook"],
     }
     return {
         "expectedCheckpoint": deepcopy(checkpoint),
         "nextProjection": {
             "coins": {"confirmed": derived["coins"]},
-            "achievements": deepcopy(recorded),
+            "achievements": recorded,
             "derived": derived,
             "checkpoint": next_checkpoint,
         },
-        "awarded": [],
+        "awarded": list(result["awarded"]),
     }
+
+
+def prepare_lifecycle(
+    registry: Dict[str, Any], ledger: Dict[str, Any], event: Any, *,
+    unlocked_at: int, opening_book_id: str, opening_content_version: int,
+    opening_scene_id: str,
+) -> Dict[str, Any]:
+    """Apply character creation once at the untouched opening checkpoint."""
+    if event.kind != "lifecycle":
+        raise CheckpointConflict("lifecycle event required")
+    if type(unlocked_at) is not int or unlocked_at < 0:
+        raise CheckpointConflict("valid server achievement timestamp required")
+    checkpoint, recorded = _validated_base(ledger, event)
+    if event.lifecycleId != "character_created":
+        raise CheckpointConflict("unsupported lifecycle event")
+    if (checkpoint.get("bookId"), checkpoint.get("contentVersion"),
+            checkpoint.get("currentSceneId")) != (
+                opening_book_id, opening_content_version, opening_scene_id):
+        raise CheckpointConflict("lifecycle event is not eligible at this checkpoint")
+    marker = f"{event.bookId}:{event.contentVersion}:{event.lifecycleId}"
+    applied = ledger.get("lifecycleApplied")
+    if not isinstance(applied, list) or any(type(item) is not str for item in applied):
+        raise CheckpointConflict("invalid lifecycle replay state")
+    if marker in applied:
+        raise CheckpointConflict("lifecycle event already applied")
+    derived = deepcopy(ledger["derived"])
+    result = apply_lifecycle(registry, derived, event.lifecycleId)
+    for achievement_id in result["awarded"]:
+        recorded[achievement_id] = {"unlockedAt": unlocked_at, "source": "awarded"}
+    if set(derived["achievements"]) != set(recorded):
+        raise CheckpointConflict("achievement projection could not be attributed")
+    return {
+        "expectedCheckpoint": deepcopy(checkpoint),
+        "nextProjection": {
+            "coins": {"confirmed": derived["coins"]},
+            "achievements": recorded,
+            "derived": derived,
+            "checkpoint": deepcopy(checkpoint),
+            "lifecycleApplied": [*applied, marker],
+            "openingGranted": ledger.get("openingGranted"),
+        },
+        "awarded": list(result["awarded"]),
+    }
+
+
+def prepare_nonterminal_choice(
+    registry: Dict[str, Any], ledger: Dict[str, Any], event: Any,
+) -> Dict[str, Any]:
+    """Compatibility wrapper for the original ordinary-choice test surface."""
+    proposal = prepare_choice(registry, ledger, event, unlocked_at=0)
+    if proposal["nextProjection"]["checkpoint"]["terminal"] or proposal["awarded"]:
+        raise CheckpointConflict("choice is not an ordinary nonterminal choice")
+    return proposal

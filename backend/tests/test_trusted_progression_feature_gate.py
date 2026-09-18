@@ -14,6 +14,7 @@ from progression import feature_gated_routes as gate
 PROGRESSION_PATHS = {
     "/api/me/progression/bootstrap",
     "/api/me/progression/choices",
+    "/api/me/progression/lifecycle",
 }
 
 
@@ -52,7 +53,7 @@ def test_disabled_registration_leaves_route_table_unchanged():
     assert paths(app).isdisjoint(PROGRESSION_PATHS)
 
 
-def test_enabled_registration_adds_only_the_two_reviewed_routes():
+def test_enabled_registration_adds_only_the_three_reviewed_routes():
     app = FastAPI()
     before = paths(app)
     registered = gate.register_trusted_progression_routes(
@@ -96,7 +97,8 @@ def test_enabled_routes_bind_server_owned_collections_registry_and_opening_pin(m
     )
     http = TestClient(app)
 
-    assert http.post("/api/me/progression/bootstrap").status_code == 200
+    headers = {"X-VC-Progression": "1"}
+    assert http.post("/api/me/progression/bootstrap", headers=headers).status_code == 200
     event = {
         "kind": "choice",
         "eventId": "550e8400-e29b-41d4-a716-446655440000",
@@ -106,7 +108,7 @@ def test_enabled_routes_bind_server_owned_collections_registry_and_opening_pin(m
         "fromSceneId": "b1_c1_s1",
         "choiceId": "c1_call_out",
     }
-    assert http.post("/api/me/progression/choices", json=event).status_code == 200
+    assert http.post("/api/me/progression/choices", headers=headers, json=event).status_code == 200
     bootstrap.assert_awaited_once_with(
         ledgers,
         registry,

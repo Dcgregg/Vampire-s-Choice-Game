@@ -2,9 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   bootstrapTrustedProgression,
   submitTrustedChoice,
+  submitTrustedLifecycle,
   TrustedProgressionError,
 } from '../trustedProgressionClient';
-import { ChoiceProgressionEvent } from '../contracts';
+import { ChoiceProgressionEvent, LifecycleProgressionEvent } from '../contracts';
 
 const ledger = {
   ownerType: 'account',
@@ -42,6 +43,23 @@ describe('trusted progression HTTP client', () => {
     expect(await bootstrapTrustedProgression()).toEqual(ledger);
     expect(fetchMock.mock.calls[0][0]).toContain('/api/me/progression/bootstrap');
     expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: 'POST', credentials: 'include' });
+    expect(fetchMock.mock.calls[0][1].headers).toMatchObject({ 'X-VC-Progression': '1' });
+  });
+
+  it('submits lifecycle intent without browser-supplied rewards', async () => {
+    const lifecycle: LifecycleProgressionEvent = {
+      kind: 'lifecycle', eventId: event.eventId, bookId: 'book1',
+      contentVersion: 1, baseProgressionRevision: 0,
+      lifecycleId: 'character_created',
+    };
+    const fetchMock = vi.fn().mockResolvedValue(response(200, {
+      status: 'confirmed', eventId: lifecycle.eventId,
+      ledger: { ...ledger, progressionRevision: 1 },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    await submitTrustedLifecycle(lifecycle);
+    expect(fetchMock.mock.calls[0][0]).toContain('/api/me/progression/lifecycle');
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual(lifecycle);
   });
 
   it('submits only the choice event and validates the matching response ID', async () => {
@@ -88,4 +106,3 @@ describe('trusted progression HTTP client', () => {
     );
   });
 });
-

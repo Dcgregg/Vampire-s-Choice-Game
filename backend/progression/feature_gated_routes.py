@@ -13,8 +13,9 @@ from fastapi import FastAPI
 from .account_progression_bootstrap import bootstrap_account_progression
 from .account_progression_routes import make_account_progression_router
 from .attributed_mongo_reservations import AttributedMongoReservationStore
-from .trusted_choice_service import process_account_choice
+from .trusted_choice_service import process_account_choice, process_account_lifecycle
 from .trusted_progression_routes import make_trusted_progression_router
+from .rate_limit import AccountRateLimiter
 
 
 TRUSTED_PROGRESSION_ENV = "TRUSTED_PROGRESSION_ROUTES"
@@ -63,13 +64,30 @@ def register_trusted_progression_routes(
             event=event,
         )
 
+    async def process_lifecycle(*, authenticated_user_id: str, event: Any) -> dict:
+        return await process_account_lifecycle(
+            ledgers,
+            events,
+            registry,
+            authenticated_user_id=authenticated_user_id,
+            event=event,
+            opening_book_id=OPENING_BOOK_ID,
+            opening_content_version=OPENING_CONTENT_VERSION,
+            opening_scene_id=OPENING_SCENE_ID,
+        )
+
+    rate_limiter = AccountRateLimiter()
+
     app.include_router(make_account_progression_router(
         current_user=current_user,
         bootstrap=bootstrap,
+        rate_limiter=rate_limiter,
     ))
     app.include_router(make_trusted_progression_router(
         current_user=current_user,
         process_choice=process_choice,
+        process_lifecycle=process_lifecycle,
+        rate_limiter=rate_limiter,
     ))
     return True
 
@@ -82,4 +100,3 @@ async def ensure_trusted_progression_indexes(
         return False
     await AttributedMongoReservationStore(ledgers, events).ensure_indexes()
     return True
-

@@ -8,8 +8,8 @@ export const TrustedProgressionStatus: React.FC = () => {
   if (!snapshot.enabled || !snapshot.accountActive) return null;
 
   const waiting = snapshot.status === 'bootstrapping' || snapshot.status === 'pending';
-  const attention = ['offline', 'conflict', 'indeterminate', 'blocked'].includes(snapshot.status);
-  const retryable = ['offline', 'conflict', 'indeterminate'].includes(snapshot.status);
+  const attention = ['offline', 'conflict', 'indeterminate', 'rate_limited', 'blocked'].includes(snapshot.status);
+  const retryable = ['offline', 'conflict', 'indeterminate', 'rate_limited'].includes(snapshot.status);
   const Icon = waiting ? Loader2 : attention ? AlertTriangle : Check;
   const label = snapshot.confirmedCoins === null
     ? 'Confirmed balance unavailable'
@@ -37,6 +37,19 @@ export const TrustedProgressionStatus: React.FC = () => {
             <CloudOff className="h-3 w-3" /> Offline
           </span>
         )}
+        {snapshot.status === 'conflict' && (
+          <span className="text-amber-200">
+            This account advanced elsewhere. Reconcile, or pause and sign out to keep this story local.
+          </span>
+        )}
+        {snapshot.status === 'indeterminate' && (
+          <span className="text-amber-200">
+            The last result is uncertain. Reconcile before making another choice.
+          </span>
+        )}
+        {snapshot.status === 'rate_limited' && (
+          <span className="text-amber-200">Too many sync attempts. Wait briefly, then reconcile.</span>
+        )}
         {retryable && (
           <button
             type="button"
@@ -45,6 +58,16 @@ export const TrustedProgressionStatus: React.FC = () => {
             className="inline-flex items-center gap-1 rounded-full border border-[#c5a059]/50 px-2 py-0.5 font-semibold text-[#e5c158] hover:border-[#c5a059]"
           >
             <RefreshCw className="h-3 w-3" /> Reconcile
+          </button>
+        )}
+        {snapshot.status === 'conflict' && (
+          <button
+            type="button"
+            data-testid="trusted-progression-pause"
+            onClick={() => trustedProgressionQueue.pauseForAccountSwitch()}
+            className="rounded-full border border-white/20 px-2 py-0.5 font-semibold text-stone-300 hover:border-white/40"
+          >
+            Pause &amp; switch account
           </button>
         )}
       </div>

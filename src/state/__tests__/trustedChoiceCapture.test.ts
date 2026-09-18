@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const recordChoice = vi.hoisted(() => vi.fn());
+const recordLifecycle = vi.hoisted(() => vi.fn());
 
 vi.hoisted(() => {
   const store = new Map<string, string>();
@@ -13,7 +14,7 @@ vi.hoisted(() => {
 });
 
 vi.mock('../../progression/trustedProgressionQueue', () => ({
-  trustedProgressionQueue: { recordChoice },
+  trustedProgressionQueue: { recordChoice, recordLifecycle },
 }));
 vi.mock('../../utils/audio', () => ({
   gothicAudio: {
@@ -33,12 +34,14 @@ describe('GameStateManager trusted choice capture', () => {
   beforeEach(() => {
     localStorage.clear();
     recordChoice.mockReset();
+    recordLifecycle.mockReset();
   });
 
   it('captures only choice identity and checkpoint before local narration advances', () => {
     recordChoice.mockReturnValue(true);
     const game = new GameStateManager();
     game.createCharacter('Elena', 'Woman', 'Bisexual');
+    expect(recordLifecycle).toHaveBeenCalledWith('character_created');
     const choice = openingChoice();
 
     game.makeChoice(choice);
@@ -64,4 +67,3 @@ describe('GameStateManager trusted choice capture', () => {
     expect(game.getState().progress.currentSceneId).toBe('b1_c1_s1');
   });
 });
-

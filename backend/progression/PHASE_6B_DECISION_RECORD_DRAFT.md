@@ -1,5 +1,8 @@
 # Phase 6B decision record — four design gates (PROPOSED, INERT)
 
+> Historical proposal. See `PHASE_6C_COMPLETION_REVIEW.md` for the implemented
+> decisions; activation, merge and deployment still require explicit approval.
+
 **Status:** review draft, not approved policy or implemented behaviour. No ledger creation, import, route, worker, schema migration, production write, merge or deployment is authorized by this record. The four decisions below must be explicitly accepted or amended before implementation. Companion documents: `TRUSTED_API_CONTRACT_DRAFT.md`, `TRUSTED_API_ACCEPTANCE_MATRIX.md`, `TRUSTED_STATE_MACHINE_REVIEW.md`.
 
 ## 1. Ledger creation and legacy provenance

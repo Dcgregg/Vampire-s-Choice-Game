@@ -87,6 +87,27 @@ describe('trusted progression durable queue', () => {
     });
   });
 
+  it('orders character creation before the first choice without assuming its award', async () => {
+    const submission = deferred<TrustedChoiceResponse>();
+    const api = {
+      bootstrap: vi.fn().mockResolvedValue(ledger()),
+      submit: vi.fn().mockReturnValue(submission.promise),
+    };
+    const queue = makeQueue(new MemoryStorage(), api);
+    await queue.enterAccount('account-a');
+    expect(queue.recordLifecycle('character_created')).toBe(true);
+    expect(queue.recordChoice(input())).toBe(true);
+    expect(api.submit.mock.calls[0][0]).toMatchObject({
+      kind: 'lifecycle', lifecycleId: 'character_created', baseProgressionRevision: 0,
+    });
+    expect(queue.snapshot()).toMatchObject({ confirmedAchievements: {}, pendingCount: 2 });
+    submission.resolve(confirmed('event-1', ledger(1)));
+    await queue.flush();
+    expect(api.submit.mock.calls[1][0]).toMatchObject({
+      kind: 'choice', baseProgressionRevision: 1,
+    });
+  });
+
   it('serialises offline choices with predicted revisions but no predicted coins', async () => {
     const first = deferred<TrustedChoiceResponse>();
     const api = {
@@ -149,6 +170,42 @@ describe('trusted progression durable queue', () => {
       expect(queue.snapshot()).toMatchObject({ pendingCount: 1, canChoose: false });
       expect(queue.recordChoice(input('another'))).toBe(false);
     }
+  });
+
+  it('keeps a rate-limited event pending for an explicit later retry', async () => {
+    const api = {
+      bootstrap: vi.fn().mockResolvedValue(ledger()),
+      submit: vi.fn().mockRejectedValue(
+        new TrustedProgressionError('progression_rate_limited', 429, true),
+      ),
+    };
+    const queue = makeQueue(new MemoryStorage(), api, ['event']);
+    await queue.enterAccount('account-a');
+    queue.recordChoice(input());
+    await queue.flush();
+    expect(queue.snapshot()).toMatchObject({
+      status: 'rate_limited', pendingCount: 1, canChoose: false,
+    });
+  });
+
+  it('pauses a conflicted account without deleting its account-scoped intent', async () => {
+    const storage = new MemoryStorage();
+    const api = {
+      bootstrap: vi.fn().mockResolvedValue(ledger()),
+      submit: vi.fn().mockRejectedValue(
+        new TrustedProgressionError('progression_conflict', 409, false),
+      ),
+    };
+    const queue = makeQueue(storage, api, ['kept-event']);
+    await queue.enterAccount('account-a');
+    queue.recordChoice(input());
+    await queue.flush();
+    queue.pauseForAccountSwitch();
+    expect(queue.snapshot()).toMatchObject({ status: 'blocked', pendingCount: 1, canChoose: false });
+
+    const returning = makeQueue(storage, api);
+    await returning.enterAccount('account-a');
+    expect(api.submit.mock.calls.at(-1)?.[0].eventId).toBe('kept-event');
   });
 
   it('isolates persisted queues by account scope', async () => {

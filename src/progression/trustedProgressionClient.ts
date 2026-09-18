@@ -1,6 +1,8 @@
 import { API_BASE } from '../sync/config';
 import {
   ChoiceProgressionEvent,
+  LifecycleProgressionEvent,
+  ProgressionEvent,
   PublicLedger,
   TrustedChoiceResponse,
 } from './contracts';
@@ -10,8 +12,10 @@ export type TrustedProgressionErrorCode =
   | 'not_authenticated'
   | 'progression_unavailable'
   | 'invalid_choice'
+  | 'invalid_lifecycle'
   | 'progression_conflict'
   | 'progression_indeterminate'
+  | 'progression_rate_limited'
   | 'progression_bootstrap_unavailable'
   | 'invalid_response'
   | 'unknown';
@@ -72,7 +76,11 @@ async function request(path: string, init: RequestInit): Promise<unknown> {
     response = await fetch(`${API_BASE}${path}`, {
       ...init,
       credentials: 'include',
-      headers: { 'Content-Type': 'application/json', ...(init.headers || {}) },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-VC-Progression': '1',
+        ...(init.headers || {}),
+      },
     });
   } catch {
     throw new TrustedProgressionError('offline', 0, true);
@@ -122,3 +130,29 @@ export async function submitTrustedChoice(
   };
 }
 
+export async function submitTrustedLifecycle(
+  event: LifecycleProgressionEvent,
+): Promise<TrustedChoiceResponse> {
+  const body = await request('/me/progression/lifecycle', {
+    method: 'POST',
+    body: JSON.stringify(event),
+  });
+  if (
+    !isObject(body) ||
+    body.eventId !== event.eventId ||
+    (body.status !== 'confirmed' && body.status !== 'duplicate')
+  ) {
+    throw new TrustedProgressionError('invalid_response', 0, false);
+  }
+  return {
+    eventId: body.eventId,
+    status: body.status,
+    ledger: parseLedger(body.ledger),
+  };
+}
+
+export function submitTrustedEvent(event: ProgressionEvent): Promise<TrustedChoiceResponse> {
+  return event.kind === 'choice'
+    ? submitTrustedChoice(event)
+    : submitTrustedLifecycle(event);
+}

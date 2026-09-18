@@ -1,7 +1,13 @@
-import { ChoiceProgressionEvent, PublicLedger, TrustedChoiceResponse } from './contracts';
+import {
+  ChoiceProgressionEvent,
+  LifecycleProgressionEvent,
+  ProgressionEvent,
+  PublicLedger,
+  TrustedChoiceResponse,
+} from './contracts';
 import {
   bootstrapTrustedProgression,
-  submitTrustedChoice,
+  submitTrustedEvent,
   TrustedProgressionError,
   TrustedProgressionErrorCode,
 } from './trustedProgressionClient';
@@ -18,17 +24,18 @@ export type TrustedQueueStatus =
   | 'offline'
   | 'conflict'
   | 'indeterminate'
+  | 'rate_limited'
   | 'blocked';
 
-interface PendingChoice {
-  event: ChoiceProgressionEvent;
+interface PendingEvent {
+  event: ProgressionEvent;
   enqueuedAt: number;
   lastError?: TrustedProgressionErrorCode;
 }
 
 interface StoredQueue {
   version: 1;
-  pending: PendingChoice[];
+  pending: PendingEvent[];
 }
 
 export interface TrustedProgressionSnapshot {
@@ -58,7 +65,7 @@ const browserStorage: StorageLike =
 
 interface QueueApi {
   bootstrap(): Promise<PublicLedger>;
-  submit(event: ChoiceProgressionEvent): Promise<TrustedChoiceResponse>;
+  submit(event: ProgressionEvent): Promise<TrustedChoiceResponse>;
 }
 
 interface ChoiceInput {
@@ -70,20 +77,22 @@ interface ChoiceInput {
 
 const defaultApi: QueueApi = {
   bootstrap: bootstrapTrustedProgression,
-  submit: submitTrustedChoice,
+  submit: submitTrustedEvent,
 };
 
-const validEvent = (value: unknown): value is ChoiceProgressionEvent => {
+const validEvent = (value: unknown): value is ProgressionEvent => {
   if (!value || typeof value !== 'object') return false;
   const event = value as Record<string, unknown>;
-  return event.kind === 'choice'
+  const common = (event.kind === 'choice' || event.kind === 'lifecycle')
     && typeof event.eventId === 'string'
     && typeof event.bookId === 'string'
     && Number.isInteger(event.contentVersion)
     && Number.isInteger(event.baseProgressionRevision)
     && (event.baseProgressionRevision as number) >= 0
-    && typeof event.fromSceneId === 'string'
-    && typeof event.choiceId === 'string';
+  if (!common) return false;
+  return event.kind === 'choice'
+    ? typeof event.fromSceneId === 'string' && typeof event.choiceId === 'string'
+    : typeof event.lifecycleId === 'string';
 };
 
 const randomId = (): string => crypto.randomUUID();
@@ -100,7 +109,7 @@ export class TrustedProgressionQueue {
   private activeScope: string | null = null;
   private scopeUsable = true;
   private ledger: PublicLedger | null = null;
-  private pending: PendingChoice[] = [];
+  private pending: PendingEvent[] = [];
   private status: TrustedQueueStatus;
   private lastError?: TrustedProgressionErrorCode;
   private listeners = new Set<(snapshot: TrustedProgressionSnapshot) => void>();
@@ -125,6 +134,7 @@ export class TrustedProgressionQueue {
       && this.status !== 'bootstrapping'
       && this.status !== 'conflict'
       && this.status !== 'indeterminate'
+      && this.status !== 'rate_limited'
       && this.status !== 'blocked'
     );
     return {
@@ -240,12 +250,40 @@ export class TrustedProgressionQueue {
     return true;
   }
 
+  recordLifecycle(lifecycleId: string): boolean {
+    if (!this.enabled || !this.activeScope) return true;
+    if (!this.ledger || !this.snapshot().canChoose || !lifecycleId) return false;
+    const event: LifecycleProgressionEvent = {
+      kind: 'lifecycle',
+      eventId: this.makeId(),
+      bookId: this.ledger.checkpoint.bookId,
+      contentVersion: this.ledger.checkpoint.contentVersion,
+      baseProgressionRevision: this.ledger.progressionRevision + this.pending.length,
+      lifecycleId,
+    };
+    this.pending.push({ event, enqueuedAt: this.now() });
+    this.persist();
+    this.status = 'pending';
+    this.lastError = undefined;
+    this.emit();
+    void this.flush();
+    return true;
+  }
+
   async retry(): Promise<void> {
     if (!this.enabled || !this.activeScope || !this.scopeUsable) return;
     this.lastError = undefined;
     this.status = 'bootstrapping';
     this.emit();
     await this.reconcile(this.generation);
+  }
+
+  /** Stop reconciliation without deleting the account-scoped pending intent. */
+  pauseForAccountSwitch(): void {
+    if (!this.enabled || !this.activeScope) return;
+    ++this.generation;
+    this.status = 'blocked';
+    this.emit();
   }
 
   private async reconcile(generation = this.generation): Promise<void> {
@@ -297,7 +335,7 @@ export class TrustedProgressionQueue {
     }
   }
 
-  private handleError(error: unknown, item?: PendingChoice): void {
+  private handleError(error: unknown, item?: PendingEvent): void {
     const trusted = error instanceof TrustedProgressionError
       ? error
       : new TrustedProgressionError('offline', 0, true);
@@ -307,6 +345,7 @@ export class TrustedProgressionQueue {
     if (trusted.code === 'offline') this.status = 'offline';
     else if (trusted.code === 'progression_conflict') this.status = 'conflict';
     else if (trusted.code === 'progression_indeterminate') this.status = 'indeterminate';
+    else if (trusted.code === 'progression_rate_limited') this.status = 'rate_limited';
     else this.status = 'blocked';
     this.emit();
   }
