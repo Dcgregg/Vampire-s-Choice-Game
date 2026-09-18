@@ -52,8 +52,9 @@ Coverage includes:
 - production frontend build: passed;
 - TypeScript check: passed;
 - frontend tests: 120 passed;
-- backend tests not requiring a separately running legacy API or disposable MongoDB: 335 passed after the bootstrap slice;
-- disposable-Mongo ownership, opening-grant and story-separation tests are delegated to GitHub Actions and must pass on the final branch head.
+- backend tests not requiring a separately running legacy API or disposable MongoDB: 335 passed, 119 service-dependent tests skipped locally;
+- all eight GitHub Actions workflows passed for both push and pull-request triggers after adding the authenticated choice-service duplicate, concurrency and recovery coverage;
+- disposable-Mongo ownership, opening-grant, story-separation and trusted-choice service tests passed without production credentials.
 
 ## Remaining player-ready gates
 
