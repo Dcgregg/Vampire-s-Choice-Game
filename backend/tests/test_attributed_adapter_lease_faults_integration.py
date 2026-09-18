@@ -23,10 +23,11 @@ async def case():
         store = AttributedMongoReservationStore(db.ledgers, db.events)
         await store.ensure_indexes()
         ledger_id = uuid4().hex
+        owner_id = uuid4().hex
         checkpoint = {"bookId": "book1", "contentVersion": 1,
                       "currentSceneId": "start", "terminal": False}
         await db.ledgers.insert_one({
-            "_id": ledger_id, "ownerType": "account", "ownerId": uuid4().hex,
+            "_id": ledger_id, "ownerType": "account", "ownerId": owner_id,
             "progressionRevision": 0, "checkpoint": checkpoint,
             "appliedEventIds": {}, "coins": {"confirmed": 0},
             "achievements": {}, "derived": {},
@@ -36,7 +37,8 @@ async def case():
             base_revision=0, awards={"coins": 10},
             next_projection={"coins": {"confirmed": 10}, "achievements": {},
                              "derived": {}, "checkpoint": {**checkpoint, "currentSceneId": "next"}},
-            expected_checkpoint=checkpoint,
+            expected_checkpoint=checkpoint, expected_owner_type="account",
+            expected_owner_id=owner_id,
         )
         yield store, event
     finally:

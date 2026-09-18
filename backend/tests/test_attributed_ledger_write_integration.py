@@ -38,12 +38,14 @@ def projection():
 async def seed(ledgers):
     ledger_id = uuid4().hex
     await ledgers.insert_one({"_id": ledger_id, "progressionRevision": 0,
+                              "ownerType": "account", "ownerId": "account-a",
                               "checkpoint": checkpoint(), "appliedEventIds": {},
                               "coins": {"confirmed": 0}})
     return ledger_id
 
 
 async def write(ledgers, event):
+    event = {**event, "expectedOwnerType": "account", "expectedOwnerId": "account-a"}
     async with await ledgers.database.client.start_session() as session:
         async with session.start_transaction():
             return await write_attributed_revision(

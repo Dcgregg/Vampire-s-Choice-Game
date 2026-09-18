@@ -28,6 +28,8 @@ def test_valid_plan_is_derived_and_does_not_mutate_ledger():
     result = plan(current)
     assert current == before
     assert result["ledger_id"] == "ledger-a"
+    assert result["expected_owner_type"] == "account"
+    assert result["expected_owner_id"] == "account-a"
     assert result["event_id"] == event().eventId
     assert len(result["payload_hash"]) == 64
     assert result["base_revision"] == 3

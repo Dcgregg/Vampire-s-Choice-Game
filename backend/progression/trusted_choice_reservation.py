@@ -44,6 +44,8 @@ def plan_account_choice_reservation(
     proposal = prepare_nonterminal_choice(registry, owned, event)
     return {
         "ledger_id": owned["_id"],
+        "expected_owner_type": "account",
+        "expected_owner_id": authenticated_user_id,
         "event_id": event.eventId,
         "payload_hash": canonical_event_sha256(event.model_dump(mode="python")),
         "base_revision": revision,
