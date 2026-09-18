@@ -14,7 +14,10 @@ from progression.trusted_choice_reservation import plan_account_choice_reservati
 
 
 def registry():
-    return {"characters": {"friend": 0}, "books": {"book1": {"version": 1,
+    return {"characters": {"friend": 0},
+            "rules": {"affinityMin": -100, "affinityMax": 100, "coinsMin": 0,
+                      "derivedAchievements": []},
+            "books": {"book1": {"version": 1,
             "scenes": {"start": {"choices": {"ordinary": {
                 "nextSceneId": "next", "effects": {"coinsChange": 10},
             }}}, "next": {"choices": {}}}}}}
