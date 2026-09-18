@@ -23,6 +23,13 @@ Coverage includes:
 - disposable-Mongo tests for ownership change before reservation and after reservation but before commit;
 - all eight existing Phase 6B workflows now run on this Phase 6C branch as well as on pull requests to `main`.
 
+## Completed secure slice: strict authenticated route contract
+
+- Added a server-owned choice orchestrator that loads ledgers only by the authenticated account identity, handles durable duplicate/recovery paths before new-event validation, and never accepts client projections or rewards.
+- Added an opt-in `POST /api/me/progression/choices` router factory with strict input, stable conflict/validation/indeterminate errors and no-store responses.
+- The router is deliberately not imported or registered by `server.py`; live behaviour remains unchanged.
+- First-account ledger creation and the 50-BloodCoin grant remain a separate activation slice, so a missing trusted ledger fails closed.
+
 ## Verification completed locally
 
 - production frontend build: passed;
@@ -34,7 +41,7 @@ Coverage includes:
 
 ## Remaining player-ready gates
 
-1. Build the authenticated trusted-progression API orchestrator and strict public response contract.
+1. Add disposable-Mongo end-to-end tests for the authenticated service duplicate, concurrency and ambiguous-recovery paths.
 2. Register routes only behind an explicit disabled-by-default feature flag.
 3. Connect the client choice queue, retry/reconciliation and confirmed-versus-pending UI.
 4. Implement existing-story preservation without converting legacy narrative flags into reward evidence.
