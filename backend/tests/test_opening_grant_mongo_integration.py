@@ -9,11 +9,15 @@ from motor.motor_asyncio import AsyncIOMotorClient
 
 from progression.clean_ledger import InvalidCleanLedger
 from progression.opening_grant import OPENING_BLOOD_COINS, initialize_granted_account_ledger
+from progression.strict_event_input import StrictChoiceEvent
+from progression.trusted_choice_reservation import plan_account_choice_reservation
 
 
 def registry():
     return {"characters": {"friend": 0}, "books": {"book1": {"version": 1,
-            "scenes": {"start": {"choices": {}}}}}}
+            "scenes": {"start": {"choices": {"ordinary": {
+                "nextSceneId": "next", "effects": {"coinsChange": 10},
+            }}}, "next": {"choices": {}}}}}}
 
 
 def args(owner_id="account-one"):
@@ -46,11 +50,30 @@ async def test_concurrent_first_signins_create_one_grant(ledgers):
     assert await ledgers.count_documents({"ownerType": "account", "ownerId": "account-one"}) == 1
     stored = await ledgers.find_one({"_id": results[0]["_id"]})
     assert stored["coins"] == {"confirmed": 50}
+    assert stored["derived"]["coins"] == 50
     assert stored["openingGranted"] is True
     assert stored["progressionRevision"] == 0 and stored["appliedEventIds"] == {}
     assert stored["achievements"] == {}
     results[0]["coins"]["confirmed"] = 900
     assert (await ledgers.find_one({"_id": stored["_id"]}))["coins"]["confirmed"] == 50
+
+
+@pytest.mark.asyncio
+async def test_first_trusted_choice_can_plan_from_granted_balance(ledgers):
+    granted = await initialize_granted_account_ledger(
+        ledgers, registry(), **args(),
+    )
+    choice = StrictChoiceEvent(
+        kind="choice", eventId="550e8400-e29b-41d4-a716-446655440000",
+        bookId="book1", contentVersion=1, baseProgressionRevision=0,
+        fromSceneId="start", choiceId="ordinary",
+    )
+    plan = plan_account_choice_reservation(
+        registry(), granted, choice, authenticated_user_id="account-one",
+    )
+    assert plan["awards"] == {"coins": 10}
+    assert plan["next_projection"]["coins"] == {"confirmed": 60}
+    assert plan["next_projection"]["derived"]["coins"] == 60
 
 
 @pytest.mark.asyncio

@@ -30,25 +30,31 @@ Coverage includes:
 - The router is deliberately not imported or registered by `server.py`; live behaviour remains unchanged.
 - First-account ledger creation and the 50-BloodCoin grant remain a separate activation slice, so a missing trusted ledger fails closed.
 
+## Completed secure slice: account bootstrap and legacy-story separation
+
+- Added an authenticated, idempotent account bootstrap service and an opt-in `POST /api/me/progression/bootstrap` route factory with no client-supplied state.
+- New account ledgers start with exactly 50 confirmed BloodCoins, fresh achievements and a server-owned opening checkpoint.
+- Fixed the opening grant to update confirmed and reducer-derived coin balances together; the first trusted choice can now plan from 50 to 60 without failing the consistency guard.
+- Existing progressed ledgers are returned without a top-up. Existing unawarded, malformed or wrong-value revision-zero ledgers fail closed and require an explicit reviewed migration.
+- Disposable-Mongo coverage proves that credential-protected legacy story claiming preserves narrative progress while stripping client rewards, and that later tampering with compatibility save rewards cannot change the trusted ledger.
+- The bootstrap and story-claim routes remain unregistered; live players and production data are unchanged.
+
 ## Verification completed locally
 
 - production frontend build: passed;
 - TypeScript check: passed;
 - frontend tests: 120 passed;
-- backend tests not requiring a separately running legacy API or disposable MongoDB: 300 passed before this slice;
-- focused trusted-planner and reservation unit tests: 124 passed before the new owner-fence tests;
-- disposable-Mongo ownership tests are delegated to GitHub Actions and must pass before this slice is considered complete.
+- backend tests not requiring a separately running legacy API or disposable MongoDB: 335 passed after the bootstrap slice;
+- disposable-Mongo ownership, opening-grant and story-separation tests are delegated to GitHub Actions and must pass on the final branch head.
 
 ## Remaining player-ready gates
 
-1. Add disposable-Mongo end-to-end tests for the authenticated service duplicate, concurrency and ambiguous-recovery paths.
+1. Add disposable-Mongo end-to-end tests for the authenticated choice service duplicate, concurrency and ambiguous-recovery paths.
 2. Register routes only behind an explicit disabled-by-default feature flag.
 3. Connect the client choice queue, retry/reconciliation and confirmed-versus-pending UI.
-4. Implement existing-story preservation without converting legacy narrative flags into reward evidence.
-5. Integrate the once-only 50-BloodCoin account opening grant and fresh achievements.
-6. Define and implement terminal, lifecycle and achievement-awarding transitions.
-7. Complete conflict, cancellation, account-switching, offline and second-device recovery UX.
-8. Pass real-login browser-to-API-to-disposable-Mongo tests, full regression tests, security review and explicit cutover approval.
+4. Define and implement terminal, lifecycle and achievement-awarding transitions.
+5. Complete conflict, cancellation, account-switching, offline and second-device recovery UX.
+6. Pass real-login browser-to-API-to-disposable-Mongo tests, full regression tests, security review and explicit cutover approval.
 
 ## Safety boundary
 
