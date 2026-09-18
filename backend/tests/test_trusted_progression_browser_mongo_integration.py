@@ -89,10 +89,11 @@ async def test_chromium_cookie_session_confirms_lifecycle_and_first_choice(colle
                         method: 'POST', headers, body: JSON.stringify(choice)});
                     return {withoutCsrf: withoutCsrf.status, bootstrap: bootstrap.status,
                         created: created.status, chosen: chosen.status,
-                        ledger: (await chosen.json()).ledger};
+                        afterCreated, chosenBody: await chosen.json()};
                 }""")
                 assert result["withoutCsrf"] == 403
-                assert result["bootstrap"] == result["created"] == result["chosen"] == 200
+                assert result["bootstrap"] == result["created"] == result["chosen"] == 200, result
+                result["ledger"] = result["chosenBody"]["ledger"]
                 assert result["ledger"]["coins"] == {"confirmed": 50}
                 assert set(result["ledger"]["achievements"]) == {
                     "THE_STORY_BEGINS", "FIRST_CHOICE",

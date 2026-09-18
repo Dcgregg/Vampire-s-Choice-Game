@@ -108,7 +108,7 @@ async def test_session_cookie_completes_full_book_with_atomic_server_rewards(dat
             response = await http.post(
                 "/api/me/progression/choices", headers=headers, json=last_event,
             )
-            assert response.status_code == 200, response.text
+            assert response.status_code == 200, f"{step['event']}: {response.text}"
             ledger = response.json()["ledger"]
 
         assert last_event is not None

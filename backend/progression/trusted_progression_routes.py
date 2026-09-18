@@ -23,6 +23,7 @@ def _log_rejection(kind: str, status: str) -> None:
     logger.warning(
         "trusted_progression_outcome",
         extra={"progression_kind": kind, "progression_status": status},
+        exc_info=True,
     )
 
 
