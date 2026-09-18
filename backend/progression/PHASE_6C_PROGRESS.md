@@ -47,22 +47,29 @@ Coverage includes:
 - A retry after a commit-before-finalisation crash reconciles from durable attribution, and an active unknown outcome remains indeterminate until its lease safely expires.
 - This coverage does not register the experimental route or enable trusted progression for live players.
 
+## Completed secure slice: disabled-by-default route composition
+
+- The account bootstrap and trusted choice routers are now composed into `server.py` only when `TRUSTED_PROGRESSION_ROUTES` exactly equals `enabled`.
+- Missing, blank, conventional truthy and malformed values all leave both routes absent; the normal production route table is unchanged by default.
+- Trusted-content loading and progression index creation stay behind the same gate. An enabled deployment fails closed if its trusted registry is unavailable.
+- The enabled startup path ensures the unique account-owner, event-ID and target-revision indexes before requests are served.
+- This branch does not set the activation variable in any deployment configuration, so live trusted progression remains off.
+
 ## Verification completed locally
 
 - production frontend build: passed;
 - TypeScript check: passed;
 - frontend tests: 120 passed;
-- backend tests not requiring a separately running legacy API or disposable MongoDB: 335 passed, 119 service-dependent tests skipped locally;
+- backend tests not requiring a separately running legacy API or disposable MongoDB: 355 passed, 119 service-dependent tests skipped locally;
 - all eight GitHub Actions workflows passed for both push and pull-request triggers after adding the authenticated choice-service duplicate, concurrency and recovery coverage;
 - disposable-Mongo ownership, opening-grant, story-separation and trusted-choice service tests passed without production credentials.
 
 ## Remaining player-ready gates
 
-1. Register routes only behind an explicit disabled-by-default feature flag.
-2. Connect the client choice queue, retry/reconciliation and confirmed-versus-pending UI.
-3. Define and implement terminal, lifecycle and achievement-awarding transitions.
-4. Complete conflict, cancellation, account-switching, offline and second-device recovery UX.
-5. Pass real-login browser-to-API-to-disposable-Mongo tests, full regression tests, security review and explicit cutover approval.
+1. Connect the client choice queue, retry/reconciliation and confirmed-versus-pending UI.
+2. Define and implement terminal, lifecycle and achievement-awarding transitions.
+3. Complete conflict, cancellation, account-switching, offline and second-device recovery UX.
+4. Pass real-login browser-to-API-to-disposable-Mongo tests, full regression tests, security review and explicit cutover approval.
 
 ## Safety boundary
 
