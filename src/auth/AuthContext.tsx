@@ -2,7 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useRef, useSt
 import { gameStateManager } from '../state/gameState';
 import { syncManager } from '../sync/syncManager';
 import {
-  exchangeSession, getMe, logoutApi, claimSave, getAccountSave, PublicUser, CloudSave,
+  getMe, logoutApi, claimSave, getAccountSave, PublicUser, CloudSave,
 } from '../sync/cloudClient';
 import { TRUSTED_PROGRESSION_ENABLED } from '../sync/config';
 import {
@@ -118,21 +118,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (processed.current) return;
     processed.current = true;
     const run = async () => {
-      // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
-      const hash = window.location.hash || '';
-      if (hash.includes('session_id=')) {
-        const sid = new URLSearchParams(hash.replace(/^#/, '')).get('session_id');
-        history.replaceState(null, '', window.location.pathname + window.location.search);
-        if (sid) {
-          try {
-            const u = await exchangeSession(sid);
-            setUser(u);
-            await linkProgress(u);
-          } catch { /* fall through to unauthenticated */ }
-        }
-        setLoading(false);
-        return;
-      }
       const me = await getMe();
       if (me) { setUser(me); await linkProgress(me); }
       setLoading(false);
@@ -141,9 +126,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [linkProgress]);
 
   const login = useCallback(() => {
-    // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
-    const redirectUrl = window.location.origin + '/';
-    window.location.href = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}`;
+    window.location.href = '/api/auth/google/start';
   }, []);
 
   const logout = useCallback(async () => {
