@@ -13,6 +13,10 @@ and are NOT tamper-proof yet (documented, not marketed as authoritative).
 import os
 import re
 import json as _json
+import base64
+import hashlib
+import secrets
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
@@ -20,7 +24,9 @@ from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
+from google.auth.transport import requests as google_requests
+from google.oauth2 import id_token as google_id_token
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo.errors import DuplicateKeyError
 from pydantic import BaseModel, ConfigDict, Field
@@ -38,10 +44,10 @@ load_dotenv()
 MONGO_URL = os.environ.get("MONGO_URL") or os.environ["MONGODB_URI"]
 DB_NAME = os.environ.get("DB_NAME", "vampires_choice_phase6c_staging")
 CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "*")
-EMERGENT_SESSION_URL = os.environ.get(
-    "EMERGENT_SESSION_URL",
-    "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
-)
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
+GOOGLE_REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI")
+GOOGLE_OAUTH_SUCCESS_URL = os.environ.get("GOOGLE_OAUTH_SUCCESS_URL", "/")
 SESSION_TTL_DAYS = 7
 TRUSTED_PROGRESSION_ACTIVATION = os.environ.get("TRUSTED_PROGRESSION_ROUTES")
 TRUSTED_PROGRESSION_ENABLED = trusted_progression_routes_enabled(
@@ -258,7 +264,7 @@ async def _anon_conflict(player_id: str) -> JSONResponse:
     })
 
 
-# ===================== Authentication (Emergent Google) =====================
+# ===================== Authentication (direct Google OAuth) =====================
 class PublicUser(BaseModel):
     email: str
     name: str
@@ -294,23 +300,67 @@ async def _current_user(request: Request) -> Dict[str, Any]:
     return user
 
 
-class SessionRequest(BaseModel):
-    session_id: str
+def _require_google_oauth_config() -> None:
+    if not all((GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI)):
+        raise HTTPException(status_code=503, detail={"error": "google_oauth_not_configured"})
 
 
-@api.post("/auth/session")
-async def auth_session(body: SessionRequest, response: Response):
-    # Exchange the one-time session_id with Emergent (server-side only).
-    req = urllib.request.Request(EMERGENT_SESSION_URL, headers={"X-Session-ID": body.session_id})
+@api.get("/auth/google/start")
+async def google_auth_start():
+    _require_google_oauth_config()
+    state = secrets.token_urlsafe(32)
+    verifier = secrets.token_urlsafe(64)
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    params = urllib.parse.urlencode({
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": GOOGLE_REDIRECT_URI,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "state": state,
+        "code_challenge": challenge,
+        "code_challenge_method": "S256",
+        "prompt": "select_account",
+    })
+    response = RedirectResponse(f"https://accounts.google.com/o/oauth2/v2/auth?{params}", status_code=302)
+    response.set_cookie("oauth_state", state, max_age=600, httponly=True, secure=True, samesite="lax", path="/api/auth/google")
+    response.set_cookie("oauth_code_verifier", verifier, max_age=600, httponly=True, secure=True, samesite="lax", path="/api/auth/google")
+    return response
+
+
+@api.get("/auth/google/callback")
+async def google_auth_callback(request: Request, code: str, state: str):
+    _require_google_oauth_config()
+    expected_state = request.cookies.get("oauth_state") or ""
+    verifier = request.cookies.get("oauth_code_verifier") or ""
+    if not expected_state or not verifier or not secrets.compare_digest(state, expected_state):
+        raise HTTPException(status_code=400, detail={"error": "invalid_oauth_state"})
+
+    body = urllib.parse.urlencode({
+        "code": code,
+        "client_id": GOOGLE_CLIENT_ID,
+        "client_secret": GOOGLE_CLIENT_SECRET,
+        "redirect_uri": GOOGLE_REDIRECT_URI,
+        "grant_type": "authorization_code",
+        "code_verifier": verifier,
+    }).encode()
+    token_request = urllib.request.Request(
+        "https://oauth2.googleapis.com/token",
+        data=body,
+        method="POST",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
     try:
-        with urllib.request.urlopen(req, timeout=10) as r:
-            data = _json.loads(r.read().decode())
+        with urllib.request.urlopen(token_request, timeout=10) as token_response:
+            token_data = _json.loads(token_response.read().decode())
+        data = google_id_token.verify_oauth2_token(
+            token_data["id_token"], google_requests.Request(), GOOGLE_CLIENT_ID
+        )
     except Exception:
-        raise HTTPException(status_code=401, detail={"error": "invalid_session_id"})
+        raise HTTPException(status_code=401, detail={"error": "google_oauth_failed"})
 
     email = data.get("email")
-    if not email:
-        raise HTTPException(status_code=401, detail={"error": "invalid_session_data"})
+    if not email or data.get("email_verified") is not True:
+        raise HTTPException(status_code=401, detail={"error": "unverified_google_email"})
 
     existing = await users.find_one({"email": email}, {"_id": 0})
     if existing:
@@ -323,17 +373,20 @@ async def auth_session(body: SessionRequest, response: Response):
             "picture": data.get("picture"), "created_at": _now(),
         })
 
-    session_token = data.get("session_token") or uuid.uuid4().hex
+    session_token = secrets.token_urlsafe(48)
     await sessions.insert_one({
         "user_id": user_id, "session_token": session_token,
         "expires_at": datetime.now(timezone.utc) + timedelta(days=SESSION_TTL_DAYS),
         "created_at": _now(),
     })
+    response = RedirectResponse(GOOGLE_OAUTH_SUCCESS_URL, status_code=303)
     response.set_cookie(
         key="session_token", value=session_token, httponly=True, secure=True,
-        samesite="none", path="/", max_age=SESSION_TTL_DAYS * 24 * 3600,
+        samesite="lax", path="/", max_age=SESSION_TTL_DAYS * 24 * 3600,
     )
-    return {"email": email, "name": data.get("name"), "picture": data.get("picture")}
+    response.delete_cookie("oauth_state", path="/api/auth/google")
+    response.delete_cookie("oauth_code_verifier", path="/api/auth/google")
+    return response
 
 
 @api.get("/auth/me")
@@ -347,7 +400,7 @@ async def auth_logout(request: Request, response: Response):
     token = request.cookies.get("session_token") or ""
     if token:
         await sessions.delete_one({"session_token": token})
-    response.delete_cookie("session_token", path="/", samesite="none", secure=True)
+    response.delete_cookie("session_token", path="/", samesite="lax", secure=True)
     return {"ok": True}
 
 
