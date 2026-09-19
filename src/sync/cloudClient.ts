@@ -61,16 +61,6 @@ export async function putSave(playerId: string, payload: SavePayload): Promise<P
 // ---- Authenticated (account) endpoints — rely on the httpOnly session cookie ----
 export interface PublicUser { email: string; name: string; picture?: string | null; }
 
-export async function exchangeSession(sessionId: string): Promise<PublicUser> {
-  const r = await fetch(`${API_BASE}/auth/session`, {
-    method: 'POST', credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session_id: sessionId }),
-  });
-  if (!r.ok) throw new Error(`session exchange failed: ${r.status}`);
-  return (await r.json()) as PublicUser;
-}
-
 export async function getMe(): Promise<PublicUser | null> {
   const r = await fetch(`${API_BASE}/auth/me`, { credentials: 'include' });
   if (!r.ok) return null;
