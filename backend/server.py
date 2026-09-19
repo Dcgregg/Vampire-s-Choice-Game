@@ -25,8 +25,6 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
-from google.auth.transport import requests as google_requests
-from google.oauth2 import id_token as google_id_token
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo.errors import DuplicateKeyError
 from pydantic import BaseModel, ConfigDict, Field
@@ -264,7 +262,7 @@ async def _anon_conflict(player_id: str) -> JSONResponse:
     })
 
 
-# ===================== Authentication (direct Google OAuth; env configured) =====================
+# ===================== Authentication (direct Google OAuth) =====================
 class PublicUser(BaseModel):
     email: str
     name: str
@@ -352,9 +350,12 @@ async def google_auth_callback(request: Request, code: str, state: str):
     try:
         with urllib.request.urlopen(token_request, timeout=10) as token_response:
             token_data = _json.loads(token_response.read().decode())
-        data = google_id_token.verify_oauth2_token(
-            token_data["id_token"], google_requests.Request(), GOOGLE_CLIENT_ID
+        userinfo_request = urllib.request.Request(
+            "https://openidconnect.googleapis.com/v1/userinfo",
+            headers={"Authorization": f"Bearer {token_data['access_token']}"},
         )
+        with urllib.request.urlopen(userinfo_request, timeout=10) as userinfo_response:
+            data = _json.loads(userinfo_response.read().decode())
     except Exception:
         raise HTTPException(status_code=401, detail={"error": "google_oauth_failed"})
 
