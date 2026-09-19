@@ -12,6 +12,9 @@ export default defineConfig(() => {
       VitePWA({
         registerType: 'autoUpdate',
         includeAssets: ['favicon.ico', 'icon.svg', 'apple-touch-icon.png'],
+        workbox: {
+          navigateFallbackDenylist: [/^\/api\//],
+        },
         manifest: {
           id: '/',
           name: "Vampire's Choice",
