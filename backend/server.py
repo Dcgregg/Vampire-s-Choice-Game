@@ -35,7 +35,7 @@ from progression.trusted_content import load_registry
 
 load_dotenv()
 
-MONGO_URL = os.environ["MONGO_URL"]
+MONGO_URL = os.environ.get("MONGO_URL") or os.environ["MONGODB_URI"]
 DB_NAME = os.environ["DB_NAME"]
 CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "*")
 EMERGENT_SESSION_URL = os.environ.get(
