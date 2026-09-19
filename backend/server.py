@@ -264,7 +264,7 @@ async def _anon_conflict(player_id: str) -> JSONResponse:
     })
 
 
-# ===================== Authentication (direct Google OAuth) =====================
+# ===================== Authentication (direct Google OAuth; env configured) =====================
 class PublicUser(BaseModel):
     email: str
     name: str
