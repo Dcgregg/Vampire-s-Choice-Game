@@ -15,11 +15,13 @@ class CheckpointConflict(ValueError):
     """The proposed event cannot advance the supplied durable checkpoint."""
 
 
-def _validated_base(ledger: Dict[str, Any], event: Any) -> tuple[dict, dict]:
+def _validated_base(
+    ledger: Dict[str, Any], event: Any, *, allow_terminal: bool = False,
+) -> tuple[dict, dict]:
     checkpoint = ledger["checkpoint"]
     if (ledger.get("fenced") or ledger.get("mergedInto") is not None
             or ledger.get("fencedAt") is not None or ledger.get("claimedBy") is not None
-            or checkpoint.get("terminal")):
+            or (checkpoint.get("terminal") and not allow_terminal)):
         raise CheckpointConflict("ledger is fenced, claimed or checkpoint is terminal")
     if event.baseProgressionRevision != ledger["progressionRevision"]:
         raise CheckpointConflict("progression revision changed")
@@ -50,6 +52,31 @@ def _validated_base(ledger: Dict[str, Any], event: Any) -> tuple[dict, dict]:
             or len(unlocked) != len(set(unlocked)) or set(unlocked) != set(recorded)):
         raise CheckpointConflict("confirmed and derived achievements disagree")
     return checkpoint, deepcopy(recorded)
+
+
+def _next_published_book(registry: Dict[str, Any], current_book_id: str) -> tuple[str, dict]:
+    """Resolve the immediate sequel from trusted series order, never client input."""
+    refs = registry.get("series", {}).get("books")
+    if not isinstance(refs, list):
+        raise CheckpointConflict("trusted series order is unavailable")
+    ordered = sorted(refs, key=lambda ref: ref.get("order", 0) if isinstance(ref, dict) else 0)
+    current_index = next(
+        (index for index, ref in enumerate(ordered)
+         if isinstance(ref, dict) and ref.get("id") == current_book_id),
+        None,
+    )
+    if current_index is None or current_index + 1 >= len(ordered):
+        raise CheckpointConflict("no sequel follows this book")
+    sequel = ordered[current_index + 1]
+    if not isinstance(sequel, dict) or sequel.get("status") != "available":
+        raise CheckpointConflict("the next book is not published")
+    sequel_id = sequel.get("id")
+    if not isinstance(sequel_id, str) or not sequel_id:
+        raise CheckpointConflict("trusted sequel metadata is invalid")
+    book = registry.get("books", {}).get(sequel_id)
+    if not isinstance(book, dict):
+        raise CheckpointConflict("published sequel content is unavailable")
+    return sequel_id, book
 
 
 def prepare_choice(
@@ -103,7 +130,42 @@ def prepare_lifecycle(
         raise CheckpointConflict("lifecycle event required")
     if type(unlocked_at) is not int or unlocked_at < 0:
         raise CheckpointConflict("valid server achievement timestamp required")
-    checkpoint, recorded = _validated_base(ledger, event)
+    checkpoint, recorded = _validated_base(
+        ledger, event, allow_terminal=event.lifecycleId == "start_next_book",
+    )
+    if event.lifecycleId == "start_next_book":
+        if checkpoint.get("terminal") is not True:
+            raise CheckpointConflict("book transition requires a terminal checkpoint")
+        marker = f"{event.bookId}:{event.contentVersion}:{event.lifecycleId}"
+        applied = ledger.get("lifecycleApplied")
+        if not isinstance(applied, list) or any(type(item) is not str for item in applied):
+            raise CheckpointConflict("invalid lifecycle replay state")
+        if marker in applied:
+            raise CheckpointConflict("lifecycle event already applied")
+        sequel_id, sequel = _next_published_book(registry, event.bookId)
+        sequel_version = sequel.get("version")
+        starting_scene_id = sequel.get("startingSceneId")
+        if (type(sequel_version) is not int or sequel_version <= 0
+                or not isinstance(starting_scene_id, str)
+                or starting_scene_id not in sequel.get("scenes", {})):
+            raise CheckpointConflict("published sequel entry point is invalid")
+        return {
+            "expectedCheckpoint": deepcopy(checkpoint),
+            "nextProjection": {
+                "coins": deepcopy(ledger["coins"]),
+                "achievements": recorded,
+                "derived": deepcopy(ledger["derived"]),
+                "checkpoint": {
+                    "bookId": sequel_id,
+                    "contentVersion": sequel_version,
+                    "currentSceneId": starting_scene_id,
+                    "terminal": False,
+                },
+                "lifecycleApplied": [*applied, marker],
+                "openingGranted": ledger.get("openingGranted"),
+            },
+            "awarded": [],
+        }
     if event.lifecycleId != "character_created":
         raise CheckpointConflict("unsupported lifecycle event")
     if (checkpoint.get("bookId"), checkpoint.get("contentVersion"),

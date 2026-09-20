@@ -2,9 +2,10 @@ import React from 'react';
 import { useGameState } from '../../state/useGameState';
 import { BOOKS, SERIES } from '../../data/story';
 import { Crown, BookMarked, Check, Heart, Trophy, Library, Sparkles } from 'lucide-react';
+import { nextPlayableBook } from '../../engine/multiBook';
 
 export const BookCompleteScreen: React.FC = () => {
-  const { state, setScreen } = useGameState();
+  const { state, setScreen, continueToNextBook } = useGameState();
 
   const bookId = state.progress.currentBookId;
   const book = BOOKS[bookId];
@@ -18,7 +19,9 @@ export const BookCompleteScreen: React.FC = () => {
     .slice()
     .sort((a, b) => b.affinity - a.affinity)[0];
 
-  const nextBook = SERIES.books.find((b) => b.status === 'coming_soon');
+  const playableNextBook = nextPlayableBook(SERIES, BOOKS, bookId);
+  const currentOrder = SERIES.books.find((ref) => ref.id === bookId)?.order;
+  const nextBook = SERIES.books.find((ref) => ref.order === (currentOrder ?? 0) + 1);
 
   return (
     <div
@@ -89,7 +92,7 @@ export const BookCompleteScreen: React.FC = () => {
         </div>
 
         {/* Book II teaser */}
-        {nextBook && (
+        {nextBook?.status === 'coming_soon' && (
           <div
             data-testid="book-complete-next-teaser"
             className="mt-6 flex items-center gap-3 rounded-xl border border-white/10 bg-[#100a18]/80 px-4 py-3 text-left w-full"
@@ -104,11 +107,17 @@ export const BookCompleteScreen: React.FC = () => {
           </div>
         )}
 
+        {playableNextBook && (
+          <button onClick={continueToNextBook} className="mt-8 w-full max-w-xs rounded-xl border border-[#c5a059] bg-rose-900 px-6 py-3.5 font-display text-sm font-bold uppercase tracking-widest text-[#f5f0e6]">
+            Continue to {playableNextBook.title}
+          </button>
+        )}
+
         {/* Return to library */}
         <button
           data-testid="book-complete-return-btn"
           id="book-complete-return-btn"
-          onClick={() => setScreen('landing')}
+          onClick={() => setScreen('library')}
           className="group mt-8 flex w-full max-w-xs items-center justify-center gap-2.5 rounded-xl border border-[#c5a059] bg-gradient-to-r from-rose-950 via-rose-900 to-rose-950 px-6 py-3.5 font-display text-sm font-bold uppercase tracking-widest text-[#f5f0e6] shadow-[0_4px_20px_rgba(190,18,60,0.35)] transition-all duration-300 hover:scale-[1.02] hover:shadow-[0_4px_25px_rgba(190,18,60,0.55)] active:scale-[0.98]"
         >
           <Library className="h-4 w-4 text-[#fae092]" />

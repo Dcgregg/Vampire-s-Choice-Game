@@ -122,3 +122,26 @@ def test_character_created_plan_is_atomic_and_replay_scoped():
     assert result["next_projection"]["lifecycleApplied"] == [
         "book1:1:character_created",
     ]
+
+
+def test_next_book_plan_carries_authoritative_projection_without_awards():
+    current = owned_ledger()
+    current["checkpoint"].update(currentSceneId="end", terminal=True)
+    current["lifecycleApplied"] = ["book1:1:character_created"]
+    lifecycle = StrictLifecycleEvent(
+        kind="lifecycle", eventId=event().eventId, bookId="book1",
+        contentVersion=1, baseProgressionRevision=3,
+        lifecycleId="start_next_book",
+    )
+    result = plan_account_lifecycle_reservation(
+        registry(), current, lifecycle,
+        authenticated_user_id="account-a", unlocked_at=789,
+        opening_book_id="book1", opening_content_version=1,
+        opening_scene_id="start",
+    )
+    assert result["awards"] == {"coins": 0, "achievements": []}
+    assert result["expected_checkpoint"]["terminal"] is True
+    assert result["next_projection"]["checkpoint"] == {
+        "bookId": "book2", "contentVersion": 4,
+        "currentSceneId": "b2_start", "terminal": False,
+    }
