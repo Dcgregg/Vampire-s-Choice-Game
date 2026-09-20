@@ -13,6 +13,7 @@ and are NOT tamper-proof yet (documented, not marketed as authoritative).
 import os
 import re
 import json as _json
+import logging
 import base64
 import hashlib
 import secrets
@@ -47,6 +48,8 @@ GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
 GOOGLE_REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI")
 GOOGLE_OAUTH_SUCCESS_URL = os.environ.get("GOOGLE_OAUTH_SUCCESS_URL", "/")
 SESSION_TTL_DAYS = 7
+SESSION_COOKIE_NAME = "__Host-vc_session"
+LEGACY_SESSION_COOKIE_NAME = "session_token"
 TRUSTED_PROGRESSION_ACTIVATION = os.environ.get("TRUSTED_PROGRESSION_ROUTES")
 TRUSTED_PROGRESSION_ENABLED = trusted_progression_routes_enabled(
     TRUSTED_PROGRESSION_ACTIVATION,
@@ -67,6 +70,7 @@ progression_ledgers = db["progression_ledgers"]
 progression_events = db["progression_events"]
 
 app = FastAPI(title="Vampire's Choice Cloud Save API")
+auth_logger = logging.getLogger("vampires_choice.auth")
 
 
 @app.middleware("http")
@@ -270,18 +274,29 @@ class PublicUser(BaseModel):
 
 
 async def _current_user(request: Request) -> Dict[str, Any]:
-    """Resolve the authenticated user from the session_token cookie or Bearer header.
+    """Resolve the authenticated user from the app cookie or Bearer header.
     A client-supplied anonymous player id is NEVER accepted here."""
-    token = request.cookies.get("session_token")
+    token = (
+        request.cookies.get(SESSION_COOKIE_NAME)
+        or request.cookies.get(LEGACY_SESSION_COOKIE_NAME)
+    )
     if not token:
         auth = request.headers.get("Authorization", "")
         if auth.startswith("Bearer "):
             token = auth[7:]
     if not token:
+        auth_logger.warning(
+            "authentication_rejected",
+            extra={"auth_reason": "missing_token", "auth_path": request.url.path},
+        )
         raise HTTPException(status_code=401, detail={"error": "not_authenticated"})
 
     sess = await sessions.find_one({"session_token": token}, {"_id": 0})
     if not sess:
+        auth_logger.warning(
+            "authentication_rejected",
+            extra={"auth_reason": "invalid_session", "auth_path": request.url.path},
+        )
         raise HTTPException(status_code=401, detail={"error": "invalid_session"})
     exp = sess["expires_at"]
     if isinstance(exp, str):
@@ -290,10 +305,18 @@ async def _current_user(request: Request) -> Dict[str, Any]:
         exp = exp.replace(tzinfo=timezone.utc)
     if exp < datetime.now(timezone.utc):
         await sessions.delete_one({"session_token": token})
+        auth_logger.warning(
+            "authentication_rejected",
+            extra={"auth_reason": "session_expired", "auth_path": request.url.path},
+        )
         raise HTTPException(status_code=401, detail={"error": "session_expired"})
 
     user = await users.find_one({"user_id": sess["user_id"]}, {"_id": 0})
     if not user:
+        auth_logger.warning(
+            "authentication_rejected",
+            extra={"auth_reason": "user_not_found", "auth_path": request.url.path},
+        )
         raise HTTPException(status_code=401, detail={"error": "user_not_found"})
     return user
 
@@ -382,8 +405,13 @@ async def google_auth_callback(request: Request, code: str, state: str):
     })
     response = RedirectResponse(GOOGLE_OAUTH_SUCCESS_URL, status_code=303)
     response.set_cookie(
-        key="session_token", value=session_token, httponly=True, secure=True,
+        key=SESSION_COOKIE_NAME, value=session_token, httponly=True, secure=True,
         samesite="lax", path="/", max_age=SESSION_TTL_DAYS * 24 * 3600,
+    )
+    # Remove the former generic cookie name so hosting/auth middleware cannot
+    # collide with the application session during a preview deployment.
+    response.delete_cookie(
+        LEGACY_SESSION_COOKIE_NAME, path="/", samesite="lax", secure=True,
     )
     response.delete_cookie("oauth_state", path="/api/auth/google")
     response.delete_cookie("oauth_code_verifier", path="/api/auth/google")
@@ -398,10 +426,17 @@ async def auth_me(request: Request):
 
 @api.post("/auth/logout")
 async def auth_logout(request: Request, response: Response):
-    token = request.cookies.get("session_token") or ""
+    token = (
+        request.cookies.get(SESSION_COOKIE_NAME)
+        or request.cookies.get(LEGACY_SESSION_COOKIE_NAME)
+        or ""
+    )
     if token:
         await sessions.delete_one({"session_token": token})
-    response.delete_cookie("session_token", path="/", samesite="lax", secure=True)
+    response.delete_cookie(SESSION_COOKIE_NAME, path="/", samesite="lax", secure=True)
+    response.delete_cookie(
+        LEGACY_SESSION_COOKIE_NAME, path="/", samesite="lax", secure=True,
+    )
     return {"ok": True}
 
 
