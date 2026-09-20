@@ -2,7 +2,7 @@ name: Phase 6B browser claim tests
 
 on:
   push:
-    branches: [phase-6b-trusted-progression]
+    branches: [phase-6b-trusted-progression, phase-6c-player-ready-progression]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -43,4 +43,4 @@ jobs:
           python -m playwright install --with-deps chromium
       - name: Run browser to API to disposable MongoDB test
         working-directory: backend
-        run: python -m pytest -q -rx tests/test_credentialed_claim_browser_mongo_integration.py
+        run: python -m pytest -q -rx tests/test_credentialed_claim_browser_mongo_integration.py tests/test_trusted_progression_browser_mongo_integration.py

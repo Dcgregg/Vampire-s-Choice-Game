@@ -13,6 +13,11 @@ and are NOT tamper-proof yet (documented, not marketed as authoritative).
 import os
 import re
 import json as _json
+import logging
+import base64
+import hashlib
+import secrets
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
@@ -20,22 +25,35 @@ from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo.errors import DuplicateKeyError
 from pydantic import BaseModel, ConfigDict, Field
 import uuid
 
+from progression.feature_gated_routes import (
+    ensure_trusted_progression_indexes,
+    register_trusted_progression_routes,
+    trusted_progression_routes_enabled,
+)
+from progression.trusted_content import load_registry
+
 load_dotenv()
 
-MONGO_URL = os.environ["MONGO_URL"]
-DB_NAME = os.environ["DB_NAME"]
+MONGO_URL = os.environ.get("MONGO_URL") or os.environ["MONGODB_URI"]
+DB_NAME = os.environ.get("DB_NAME", "vampires_choice_phase6c_staging")
 CORS_ORIGINS = os.environ.get("CORS_ORIGINS", "*")
-EMERGENT_SESSION_URL = os.environ.get(
-    "EMERGENT_SESSION_URL",
-    "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
-)
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
+GOOGLE_REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI")
+GOOGLE_OAUTH_SUCCESS_URL = os.environ.get("GOOGLE_OAUTH_SUCCESS_URL", "/")
 SESSION_TTL_DAYS = 7
+SESSION_COOKIE_NAME = "__Host-vc_session"
+LEGACY_SESSION_COOKIE_NAME = "session_token"
+TRUSTED_PROGRESSION_ACTIVATION = os.environ.get("TRUSTED_PROGRESSION_ROUTES")
+TRUSTED_PROGRESSION_ENABLED = trusted_progression_routes_enabled(
+    TRUSTED_PROGRESSION_ACTIVATION,
+)
 
 # Highest player-SAVE schema version this server understands (see frontend storage.ts).
 SUPPORTED_SAVE_SCHEMA_VERSIONS = {1, 2, 3}
@@ -48,8 +66,11 @@ saves = db["cloud_saves"]        # anonymous saves (weaker trust model)
 account_saves = db["account_saves"]  # account-owned saves (authenticated)
 users = db["users"]
 sessions = db["user_sessions"]
+progression_ledgers = db["progression_ledgers"]
+progression_events = db["progression_events"]
 
 app = FastAPI(title="Vampire's Choice Cloud Save API")
+auth_logger = logging.getLogger("vampires_choice.auth")
 
 
 @app.middleware("http")
@@ -83,6 +104,11 @@ async def _ensure_indexes():
     await account_saves.create_index("userId", unique=True)
     await sessions.create_index("session_token", unique=True)
     await users.create_index("email", unique=True)
+    await ensure_trusted_progression_indexes(
+        activation_value=TRUSTED_PROGRESSION_ACTIVATION,
+        ledgers=progression_ledgers,
+        events=progression_events,
+    )
 
 
 # ---- Validation models (structure-only; nested detail stays flexible) ----
@@ -240,7 +266,7 @@ async def _anon_conflict(player_id: str) -> JSONResponse:
     })
 
 
-# ===================== Authentication (Emergent Google) =====================
+# ===================== Authentication (direct Google OAuth) =====================
 class PublicUser(BaseModel):
     email: str
     name: str
@@ -248,18 +274,29 @@ class PublicUser(BaseModel):
 
 
 async def _current_user(request: Request) -> Dict[str, Any]:
-    """Resolve the authenticated user from the session_token cookie or Bearer header.
+    """Resolve the authenticated user from the app cookie or Bearer header.
     A client-supplied anonymous player id is NEVER accepted here."""
-    token = request.cookies.get("session_token")
+    token = (
+        request.cookies.get(SESSION_COOKIE_NAME)
+        or request.cookies.get(LEGACY_SESSION_COOKIE_NAME)
+    )
     if not token:
         auth = request.headers.get("Authorization", "")
         if auth.startswith("Bearer "):
             token = auth[7:]
     if not token:
+        auth_logger.warning(
+            "authentication_rejected",
+            extra={"auth_reason": "missing_token", "auth_path": request.url.path},
+        )
         raise HTTPException(status_code=401, detail={"error": "not_authenticated"})
 
     sess = await sessions.find_one({"session_token": token}, {"_id": 0})
     if not sess:
+        auth_logger.warning(
+            "authentication_rejected",
+            extra={"auth_reason": "invalid_session", "auth_path": request.url.path},
+        )
         raise HTTPException(status_code=401, detail={"error": "invalid_session"})
     exp = sess["expires_at"]
     if isinstance(exp, str):
@@ -268,31 +305,86 @@ async def _current_user(request: Request) -> Dict[str, Any]:
         exp = exp.replace(tzinfo=timezone.utc)
     if exp < datetime.now(timezone.utc):
         await sessions.delete_one({"session_token": token})
+        auth_logger.warning(
+            "authentication_rejected",
+            extra={"auth_reason": "session_expired", "auth_path": request.url.path},
+        )
         raise HTTPException(status_code=401, detail={"error": "session_expired"})
 
     user = await users.find_one({"user_id": sess["user_id"]}, {"_id": 0})
     if not user:
+        auth_logger.warning(
+            "authentication_rejected",
+            extra={"auth_reason": "user_not_found", "auth_path": request.url.path},
+        )
         raise HTTPException(status_code=401, detail={"error": "user_not_found"})
     return user
 
 
-class SessionRequest(BaseModel):
-    session_id: str
+def _require_google_oauth_config() -> None:
+    if not all((GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI)):
+        raise HTTPException(status_code=503, detail={"error": "google_oauth_not_configured"})
 
 
-@api.post("/auth/session")
-async def auth_session(body: SessionRequest, response: Response):
-    # Exchange the one-time session_id with Emergent (server-side only).
-    req = urllib.request.Request(EMERGENT_SESSION_URL, headers={"X-Session-ID": body.session_id})
+@api.get("/auth/google/start")
+async def google_auth_start():
+    _require_google_oauth_config()
+    state = secrets.token_urlsafe(32)
+    verifier = secrets.token_urlsafe(64)
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    params = urllib.parse.urlencode({
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": GOOGLE_REDIRECT_URI,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "state": state,
+        "code_challenge": challenge,
+        "code_challenge_method": "S256",
+        "prompt": "select_account",
+    })
+    response = RedirectResponse(f"https://accounts.google.com/o/oauth2/v2/auth?{params}", status_code=302)
+    response.set_cookie("oauth_state", state, max_age=600, httponly=True, secure=True, samesite="lax", path="/api/auth/google")
+    response.set_cookie("oauth_code_verifier", verifier, max_age=600, httponly=True, secure=True, samesite="lax", path="/api/auth/google")
+    return response
+
+
+@api.get("/auth/google/callback")
+async def google_auth_callback(request: Request, code: str, state: str):
+    _require_google_oauth_config()
+    expected_state = request.cookies.get("oauth_state") or ""
+    verifier = request.cookies.get("oauth_code_verifier") or ""
+    if not expected_state or not verifier or not secrets.compare_digest(state, expected_state):
+        raise HTTPException(status_code=400, detail={"error": "invalid_oauth_state"})
+
+    body = urllib.parse.urlencode({
+        "code": code,
+        "client_id": GOOGLE_CLIENT_ID,
+        "client_secret": GOOGLE_CLIENT_SECRET,
+        "redirect_uri": GOOGLE_REDIRECT_URI,
+        "grant_type": "authorization_code",
+        "code_verifier": verifier,
+    }).encode()
+    token_request = urllib.request.Request(
+        "https://oauth2.googleapis.com/token",
+        data=body,
+        method="POST",
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+    )
     try:
-        with urllib.request.urlopen(req, timeout=10) as r:
-            data = _json.loads(r.read().decode())
+        with urllib.request.urlopen(token_request, timeout=10) as token_response:
+            token_data = _json.loads(token_response.read().decode())
+        userinfo_request = urllib.request.Request(
+            "https://openidconnect.googleapis.com/v1/userinfo",
+            headers={"Authorization": f"Bearer {token_data['access_token']}"},
+        )
+        with urllib.request.urlopen(userinfo_request, timeout=10) as userinfo_response:
+            data = _json.loads(userinfo_response.read().decode())
     except Exception:
-        raise HTTPException(status_code=401, detail={"error": "invalid_session_id"})
+        raise HTTPException(status_code=401, detail={"error": "google_oauth_failed"})
 
     email = data.get("email")
-    if not email:
-        raise HTTPException(status_code=401, detail={"error": "invalid_session_data"})
+    if not email or data.get("email_verified") is not True:
+        raise HTTPException(status_code=401, detail={"error": "unverified_google_email"})
 
     existing = await users.find_one({"email": email}, {"_id": 0})
     if existing:
@@ -305,17 +397,25 @@ async def auth_session(body: SessionRequest, response: Response):
             "picture": data.get("picture"), "created_at": _now(),
         })
 
-    session_token = data.get("session_token") or uuid.uuid4().hex
+    session_token = secrets.token_urlsafe(48)
     await sessions.insert_one({
         "user_id": user_id, "session_token": session_token,
         "expires_at": datetime.now(timezone.utc) + timedelta(days=SESSION_TTL_DAYS),
         "created_at": _now(),
     })
+    response = RedirectResponse(GOOGLE_OAUTH_SUCCESS_URL, status_code=303)
     response.set_cookie(
-        key="session_token", value=session_token, httponly=True, secure=True,
-        samesite="none", path="/", max_age=SESSION_TTL_DAYS * 24 * 3600,
+        key=SESSION_COOKIE_NAME, value=session_token, httponly=True, secure=True,
+        samesite="lax", path="/", max_age=SESSION_TTL_DAYS * 24 * 3600,
     )
-    return {"email": email, "name": data.get("name"), "picture": data.get("picture")}
+    # Remove the former generic cookie name so hosting/auth middleware cannot
+    # collide with the application session during a preview deployment.
+    response.delete_cookie(
+        LEGACY_SESSION_COOKIE_NAME, path="/", samesite="lax", secure=True,
+    )
+    response.delete_cookie("oauth_state", path="/api/auth/google")
+    response.delete_cookie("oauth_code_verifier", path="/api/auth/google")
+    return response
 
 
 @api.get("/auth/me")
@@ -326,10 +426,17 @@ async def auth_me(request: Request):
 
 @api.post("/auth/logout")
 async def auth_logout(request: Request, response: Response):
-    token = request.cookies.get("session_token") or ""
+    token = (
+        request.cookies.get(SESSION_COOKIE_NAME)
+        or request.cookies.get(LEGACY_SESSION_COOKIE_NAME)
+        or ""
+    )
     if token:
         await sessions.delete_one({"session_token": token})
-    response.delete_cookie("session_token", path="/", samesite="none", secure=True)
+    response.delete_cookie(SESSION_COOKIE_NAME, path="/", samesite="lax", secure=True)
+    response.delete_cookie(
+        LEGACY_SESSION_COOKIE_NAME, path="/", samesite="lax", secure=True,
+    )
     return {"ok": True}
 
 
@@ -492,3 +599,16 @@ async def claim_save(request: Request, body: ClaimRequest):
 
 
 app.include_router(api)
+
+# Exact-token feature gate: the default and every unrecognised value leave
+# these routes absent. Registry loading also stays behind the gate so a normal
+# deployment retains the pre-Phase-6C startup surface.
+_trusted_registry = load_registry() if TRUSTED_PROGRESSION_ENABLED else None
+TRUSTED_PROGRESSION_ROUTES_REGISTERED = register_trusted_progression_routes(
+    app,
+    activation_value=TRUSTED_PROGRESSION_ACTIVATION,
+    current_user=_current_user,
+    ledgers=progression_ledgers,
+    events=progression_events,
+    registry=_trusted_registry,
+)

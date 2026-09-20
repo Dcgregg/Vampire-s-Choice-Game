@@ -12,6 +12,10 @@ export default defineConfig(() => {
       VitePWA({
         registerType: 'autoUpdate',
         includeAssets: ['favicon.ico', 'icon.svg', 'apple-touch-icon.png'],
+        // API navigation must reach Vercel services instead of the offline app shell.
+        workbox: {
+          navigateFallbackDenylist: [/^\/api\//],
+        },
         manifest: {
           id: '/',
           name: "Vampire's Choice",

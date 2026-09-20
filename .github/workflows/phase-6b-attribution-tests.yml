@@ -2,7 +2,7 @@ name: Phase 6B attribution predicate tests
 
 on:
   push:
-    branches: [phase-6b-trusted-progression]
+    branches: [phase-6b-trusted-progression, phase-6c-player-ready-progression]
   pull_request:
     branches: [main]
   workflow_dispatch:

@@ -50,7 +50,9 @@ class MongoReservationStore:
     async def reserve(self, *, ledger_id: Any, event_id: str, payload_hash: str,
                       base_revision: int, awards: Mapping[str, Any],
                       next_projection: Mapping[str, Any] | None = None,
-                      expected_checkpoint: Mapping[str, Any] | None = None) -> dict:
+                      expected_checkpoint: Mapping[str, Any] | None = None,
+                      expected_owner_type: str | None = None,
+                      expected_owner_id: str | None = None) -> dict:
         """Claim an ID, then exclusively reserve base+1 with a durable result.
 
         A caller may omit projection/checkpoint for reservation-only tests, but
@@ -61,6 +63,13 @@ class MongoReservationStore:
             raise ValueError("invalid reservation input")
         if (next_projection is None) != (expected_checkpoint is None):
             raise ValueError("projection and checkpoint must be provided together")
+        if (expected_owner_type is None) != (expected_owner_id is None):
+            raise ValueError("owner type and ID must be provided together")
+        if expected_owner_type is not None and (
+            not isinstance(expected_owner_type, str) or not expected_owner_type
+            or not isinstance(expected_owner_id, str) or not expected_owner_id
+        ):
+            raise ValueError("invalid expected owner")
         if next_projection is not None:
             if set(next_projection) - _PROJECTION_FIELDS or not _REQUIRED_FIELDS.issubset(next_projection):
                 raise ValueError("invalid server projection fields")
@@ -68,9 +77,13 @@ class MongoReservationStore:
                 raise ValueError("incomplete expected checkpoint")
         now = datetime.now(timezone.utc)
         try:
-            await self.events.insert_one({"ledgerId": ledger_id, "eventId": event_id,
-                                          "payloadHash": payload_hash, "status": "received",
-                                          "createdAt": now})
+            claimed = {"ledgerId": ledger_id, "eventId": event_id,
+                       "payloadHash": payload_hash, "status": "received",
+                       "createdAt": now}
+            if expected_owner_type is not None:
+                claimed["expectedOwnerType"] = expected_owner_type
+                claimed["expectedOwnerId"] = expected_owner_id
+            await self.events.insert_one(claimed)
         except DuplicateKeyError:
             pass
         event = await self.events.find_one({"ledgerId": ledger_id, "eventId": event_id})
@@ -78,11 +91,20 @@ class MongoReservationStore:
             raise ReservationInvariantError("event claim missing after insert")
         if event["payloadHash"] != payload_hash:
             raise ReservationInvariantError("event_id_payload_mismatch")
+        if expected_owner_type is not None and (
+            event.get("expectedOwnerType") != expected_owner_type
+            or event.get("expectedOwnerId") != expected_owner_id
+        ):
+            raise ReservationInvariantError("event_id_owner_mismatch")
         if event["status"] != "received":
             if event.get("baseRevision") != base_revision:
                 raise ReservationInvariantError("event_id_base_revision_mismatch")
             return event
-        ledger = await self.ledgers.find_one({"_id": ledger_id})
+        ledger_query = {"_id": ledger_id}
+        if expected_owner_type is not None:
+            ledger_query.update({"ownerType": expected_owner_type,
+                                 "ownerId": expected_owner_id})
+        ledger = await self.ledgers.find_one(ledger_query)
         if ledger is None or ledger.get("progressionRevision") != base_revision:
             raise ProgressionConflict("ledger revision changed before reservation")
         if expected_checkpoint is not None and ledger.get("checkpoint") != dict(expected_checkpoint):

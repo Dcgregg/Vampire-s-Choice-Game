@@ -2,7 +2,7 @@ name: Phase 6B story claim client tests
 
 on:
   push:
-    branches: [phase-6b-trusted-progression]
+    branches: [phase-6b-trusted-progression, phase-6c-player-ready-progression]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -25,4 +25,4 @@ jobs:
       - name: Type-check frontend
         run: yarn lint
       - name: Run story-only claim integration contracts
-        run: yarn test src/sync/__tests__/storyClaimClient.test.ts src/sync/__tests__/credentialedStoryClaimClient.test.ts src/sync/__tests__/anonymousCredentialClient.test.ts src/auth/__tests__/storyOnlyLink.test.ts src/auth/__tests__/credentialedStoryLink.test.ts
+        run: yarn test src/sync/__tests__/storyClaimClient.test.ts src/sync/__tests__/credentialedStoryClaimClient.test.ts src/sync/__tests__/anonymousCredentialClient.test.ts src/auth/__tests__/storyOnlyLink.test.ts src/auth/__tests__/credentialedStoryLink.test.ts src/progression/__tests__/trustedProgressionClient.test.ts src/progression/__tests__/trustedProgressionQueue.test.ts src/state/__tests__/trustedChoiceCapture.test.ts

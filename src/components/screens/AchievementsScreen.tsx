@@ -1,11 +1,18 @@
 import React from 'react';
 import { useGameState } from '../../state/useGameState';
 import { Trophy, CheckCircle2, Lock, Sparkles, Award } from 'lucide-react';
+import { useTrustedProgression } from '../../progression/useTrustedProgression';
 
 export const AchievementsScreen: React.FC = () => {
   const { state } = useGameState();
+  const trusted = useTrustedProgression();
   const achievements = Object.values(state.achievements);
-  const unlockedCount = achievements.filter((a) => a.unlockedAt).length;
+  const authoritativeAchievements = trusted.enabled && trusted.accountActive
+    ? trusted.confirmedAchievements
+    : null;
+  const unlockedCount = authoritativeAchievements
+    ? Object.keys(authoritativeAchievements).length
+    : achievements.filter((a) => a.unlockedAt).length;
 
   const getRarityBadge = (rarity: string) => {
     switch (rarity) {
@@ -45,7 +52,11 @@ export const AchievementsScreen: React.FC = () => {
       {/* Achievement Cards */}
       <div className="space-y-3">
         {achievements.map((ach) => {
-          const isUnlocked = Boolean(ach.unlockedAt);
+          const authoritative = authoritativeAchievements?.[ach.id];
+          const isUnlocked = authoritativeAchievements
+            ? Boolean(authoritative)
+            : Boolean(ach.unlockedAt);
+          const unlockedAt = authoritative?.unlockedAt ?? ach.unlockedAt;
           const rarityBadge = getRarityBadge(ach.rarity);
 
           return (
@@ -99,10 +110,10 @@ export const AchievementsScreen: React.FC = () => {
                     {ach.description}
                   </p>
 
-                  {isUnlocked && ach.unlockedAt && (
+                  {isUnlocked && unlockedAt && (
                     <div className="mt-2 flex items-center gap-1.5 text-[10px] text-[#e5c158]">
                       <CheckCircle2 className="w-3 h-3" />
-                      <span>Unlocked on {new Date(ach.unlockedAt).toLocaleDateString()}</span>
+                      <span>Unlocked on {new Date(unlockedAt).toLocaleDateString()}</span>
                     </div>
                   )}
                 </div>

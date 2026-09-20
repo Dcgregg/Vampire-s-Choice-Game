@@ -28,10 +28,13 @@ async def write_attributed_revision(
     """
     base, target = event.get("baseRevision"), event.get("targetRevision")
     ledger_id, event_id = event.get("ledgerId"), event.get("eventId")
+    owner_type, owner_id = event.get("expectedOwnerType"), event.get("expectedOwnerId")
     if type(base) is not int or base < 0 or type(target) is not int or target != base + 1:
         raise AttributionUnproven("invalid reserved revision")
     if ledger_id is None or not isinstance(event_id, str) or not event_id:
         raise AttributionUnproven("missing event identity")
+    if owner_type != "account" or not isinstance(owner_id, str) or not owner_id:
+        raise AttributionUnproven("missing authenticated account ownership")
     if not isinstance(projection, Mapping) or set(projection) - {
         "coins", "achievements", "derived", "checkpoint", "lifecycleApplied", "openingGranted"
     } or not {"coins", "achievements", "derived", "checkpoint"}.issubset(projection):
@@ -42,7 +45,8 @@ async def write_attributed_revision(
         raise AttributionUnproven("incomplete expected checkpoint")
     if not isinstance(projection["checkpoint"], Mapping):
         raise AttributionUnproven("invalid projected checkpoint")
-    filt = {"_id": ledger_id, "progressionRevision": base,
+    filt = {"_id": ledger_id, "ownerType": owner_type, "ownerId": owner_id,
+            "progressionRevision": base,
             "checkpoint": dict(expected_checkpoint),
             "appliedEventIds": {"$type": "object"},
             f"appliedEventIds.{target}": {"$exists": False},

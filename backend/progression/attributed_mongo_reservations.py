@@ -26,6 +26,7 @@ class AttributedMongoReservationStore(MongoReservationStore):
 
     async def reserve(self, *, ledger_id: Any, event_id: str, payload_hash: str,
                       base_revision: int, awards: Mapping[str, Any],
+                      expected_owner_type: str, expected_owner_id: str,
                       next_projection: Mapping[str, Any] | None = None,
                       expected_checkpoint: Mapping[str, Any] | None = None) -> dict:
         """Never accept a retry that changes an already reserved event's intent.
@@ -39,11 +40,15 @@ class AttributedMongoReservationStore(MongoReservationStore):
             ledger_id=ledger_id, event_id=event_id, payload_hash=payload_hash,
             base_revision=base_revision, awards=awards,
             next_projection=next_projection, expected_checkpoint=expected_checkpoint,
+            expected_owner_type=expected_owner_type,
+            expected_owner_id=expected_owner_id,
         )
         if event.get("status") != "received" and (
             event.get("awards") != dict(awards)
             or (next_projection is not None and event.get("nextProjection") != dict(next_projection))
             or (expected_checkpoint is not None and event.get("expectedCheckpoint") != dict(expected_checkpoint))
+            or event.get("expectedOwnerType") != expected_owner_type
+            or event.get("expectedOwnerId") != expected_owner_id
         ):
             raise ReservationInvariantError("event_id_reserved_intent_mismatch")
         return event
@@ -69,7 +74,8 @@ class AttributedMongoReservationStore(MongoReservationStore):
                     if active is None:
                         raise ReservationBusy("lease expired or ownership changed")
                     if any(active.get(key) != event.get(key) for key in (
-                        "ledgerId", "eventId", "payloadHash", "baseRevision", "targetRevision"
+                        "ledgerId", "eventId", "payloadHash", "baseRevision", "targetRevision",
+                        "expectedOwnerType", "expectedOwnerId",
                     )):
                         raise ReservationInvariantError("persisted event identity changed")
                     projection, checkpoint = active.get("nextProjection"), active.get("expectedCheckpoint")

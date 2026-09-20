@@ -2,12 +2,15 @@ import React, { useEffect } from 'react';
 import { useGameState } from '../../state/useGameState';
 import confetti from 'canvas-confetti';
 import { Trophy, X, Sparkles } from 'lucide-react';
+import { useTrustedProgression } from '../../progression/useTrustedProgression';
 
 export const AchievementBanner: React.FC = () => {
   const { newlyUnlockedAchievement, dismissAchievementBanner, setScreen } = useGameState();
+  const trusted = useTrustedProgression();
+  const trustedAccount = trusted.enabled && trusted.accountActive;
 
   useEffect(() => {
-    if (newlyUnlockedAchievement) {
+    if (newlyUnlockedAchievement && !trustedAccount) {
       try {
         // Subtle burst of crimson & gold sparks
         confetti({
@@ -21,9 +24,9 @@ export const AchievementBanner: React.FC = () => {
         // Canvas confetti fallback
       }
     }
-  }, [newlyUnlockedAchievement]);
+  }, [newlyUnlockedAchievement, trustedAccount]);
 
-  if (!newlyUnlockedAchievement) return null;
+  if (!newlyUnlockedAchievement || trustedAccount) return null;
 
   return (
     <div className="fixed top-16 left-1/2 z-50 w-[92%] max-w-md -translate-x-1/2 transform transition-all duration-500 animate-in fade-in slide-in-from-top-4">
