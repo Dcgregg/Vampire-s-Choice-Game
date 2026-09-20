@@ -60,11 +60,22 @@ export async function putSave(playerId: string, payload: SavePayload): Promise<P
 
 // ---- Authenticated (account) endpoints — rely on the httpOnly session cookie ----
 export interface PublicUser { email: string; name: string; picture?: string | null; }
+export interface AdminCatalog {
+  series: Array<{ id: string; order: number; status: string }>;
+  books: Array<{ id: string; version: number; startingSceneId: string; sceneCount: number }>;
+}
 
 export async function getMe(): Promise<PublicUser | null> {
   const r = await fetch(`${API_BASE}/auth/me`, { credentials: 'include' });
   if (!r.ok) return null;
   return (await r.json()) as PublicUser;
+}
+
+export async function getAdminCatalog(): Promise<AdminCatalog | null> {
+  const r = await fetch(`${API_BASE}/admin/content-catalog`, { credentials: 'include' });
+  if (r.status === 401 || r.status === 403) return null;
+  if (!r.ok) throw new Error(`getAdminCatalog failed: ${r.status}`);
+  return (await r.json()) as AdminCatalog;
 }
 
 export async function logoutApi(): Promise<void> {
