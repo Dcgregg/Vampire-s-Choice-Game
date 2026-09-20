@@ -534,5 +534,19 @@
         "achievementId": "THE_STORY_BEGINS"
       }
     }
+  },
+  "series": {
+    "books": [
+      {
+        "id": "book1",
+        "order": 1,
+        "status": "available"
+      },
+      {
+        "id": "book2",
+        "order": 2,
+        "status": "coming_soon"
+      }
+    ]
   }
 }

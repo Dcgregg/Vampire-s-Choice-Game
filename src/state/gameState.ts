@@ -7,7 +7,8 @@ import {
   GameSettings,
 } from '../types';
 import { loadSavedState, savePlayerState, DEFAULT_PLAYER_STATE, clearPlayerState, migrateAndMerge } from '../utils/storage';
-import { getSceneById, ALL_SCENES, BOOKS, BOOK_VERSIONS } from '../data/story';
+import { getSceneById, ALL_SCENES, BOOKS, BOOK_VERSIONS, SERIES } from '../data/story';
+import { enterNextBook, nextPlayableBook } from '../engine/multiBook';
 import { INITIAL_CHARACTERS } from '../data/characters';
 import { INITIAL_ACHIEVEMENTS } from '../data/achievements';
 import { gothicAudio } from '../utils/audio';
@@ -31,6 +32,7 @@ export type ScreenType =
   | 'character_creation'
   | 'reading'
   | 'book_complete'
+  | 'library'
   | 'character'
   | 'relationships'
   | 'achievements'
@@ -173,6 +175,16 @@ export class GameStateManager {
       this.activeScreen = 'character_creation';
     }
     this.notify();
+  }
+
+  public continueToNextBook(): boolean {
+    if (!isCurrentBookCompleted(this.state)) return false;
+    const next = nextPlayableBook(SERIES, BOOKS, this.state.progress.currentBookId);
+    if (!next || !trustedProgressionQueue.recordLifecycle('start_next_book')) return false;
+    this.state = enterNextBook(this.state, next);
+    this.activeScreen = 'reading';
+    this.notify();
+    return true;
   }
 
   public unlockAchievement(achievementId: string) {

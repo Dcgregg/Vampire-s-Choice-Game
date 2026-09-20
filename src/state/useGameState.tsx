@@ -10,6 +10,7 @@ interface GameStateContextType {
   setScreen: (screen: ScreenType) => void;
   createCharacter: (name: string, gender: GenderIdentity, orientation: SexualOrientation) => void;
   continueStory: () => void;
+  continueToNextBook: () => boolean;
   makeChoice: (choice: SceneChoice) => void;
   jumpToScene: (sceneId: string) => void;
   updateSettings: (settings: Partial<GameSettings>) => void;
@@ -51,6 +52,7 @@ export const GameStateProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       createCharacter: (name: string, g: GenderIdentity, o: SexualOrientation) =>
         gameStateManager.createCharacter(name, g, o),
       continueStory: () => gameStateManager.continueStory(),
+      continueToNextBook: () => gameStateManager.continueToNextBook(),
       makeChoice: (c: SceneChoice) => gameStateManager.makeChoice(c),
       jumpToScene: (id: string) => gameStateManager.jumpToScene(id),
       updateSettings: (st: Partial<GameSettings>) => gameStateManager.updateSettings(st),

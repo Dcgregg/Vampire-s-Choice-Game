@@ -16,6 +16,10 @@ UUID4 = "550e8400-e29b-41d4-a716-446655440000"
 
 def registry():
     return {
+        "series": {"books": [
+            {"id": "book1", "order": 1, "status": "available"},
+            {"id": "book2", "order": 2, "status": "available"},
+        ]},
         "characters": {"friend": 0},
         "rules": {"affinityMin": -100, "affinityMax": 100, "coinsMin": 0,
                   "derivedAchievements": [
@@ -23,7 +27,7 @@ def registry():
                   ], "lifecycleEvents": {
                       "character_created": {"achievementId": "story_started"},
                   }},
-        "books": {"book1": {"version": 1, "scenes": {
+        "books": {"book1": {"version": 1, "startingSceneId": "start", "scenes": {
             "start": {"choices": {
                 "ordinary": {"nextSceneId": "next", "effects": {"coinsChange": 10}},
                 "spend_and_change": {"nextSceneId": "next", "effects": {
@@ -39,6 +43,8 @@ def registry():
                 "noncurrent": {"nextSceneId": "end", "effects": {"coinsChange": 500}},
             }},
             "end": {"choices": {}},
+        }}, "book2": {"version": 4, "startingSceneId": "b2_start", "scenes": {
+            "b2_start": {"choices": {}},
         }}},
     }
 
@@ -246,3 +252,51 @@ def test_character_created_lifecycle_is_opening_only_and_replay_marked():
         "book1:1:character_created",
     ]
     assert proposal["nextProjection"]["checkpoint"] == current["checkpoint"]
+
+
+def test_start_next_book_preserves_rewards_and_uses_trusted_sequel():
+    current = ledger()
+    current["checkpoint"].update(currentSceneId="end", terminal=True)
+    current["lifecycleApplied"] = ["book1:1:character_created"]
+    current["derived"]["flags"] = {"kept_oath": True}
+    lifecycle = StrictLifecycleEvent(
+        kind="lifecycle", eventId=UUID4, bookId="book1",
+        contentVersion=1, baseProgressionRevision=3,
+        lifecycleId="start_next_book",
+    )
+    before = deepcopy(current)
+    proposal = prepare_lifecycle(
+        registry(), current, lifecycle, unlocked_at=789,
+        opening_book_id="book1", opening_content_version=1,
+        opening_scene_id="start",
+    )
+    assert current == before
+    assert proposal["nextProjection"]["checkpoint"] == {
+        "bookId": "book2", "contentVersion": 4,
+        "currentSceneId": "b2_start", "terminal": False,
+    }
+    assert proposal["nextProjection"]["coins"] == current["coins"]
+    assert proposal["nextProjection"]["derived"] == current["derived"]
+    assert proposal["nextProjection"]["lifecycleApplied"][-1] == "book1:1:start_next_book"
+
+
+def test_start_next_book_rejects_unpublished_or_replayed_transition():
+    current = ledger()
+    current["checkpoint"].update(currentSceneId="end", terminal=True)
+    current["lifecycleApplied"] = []
+    lifecycle = StrictLifecycleEvent(
+        kind="lifecycle", eventId=UUID4, bookId="book1",
+        contentVersion=1, baseProgressionRevision=3,
+        lifecycleId="start_next_book",
+    )
+    unavailable = registry()
+    unavailable["series"]["books"][1]["status"] = "coming_soon"
+    with pytest.raises(CheckpointConflict, match="not published"):
+        prepare_lifecycle(unavailable, current, lifecycle, unlocked_at=1,
+                          opening_book_id="book1", opening_content_version=1,
+                          opening_scene_id="start")
+    current["lifecycleApplied"] = ["book1:1:start_next_book"]
+    with pytest.raises(CheckpointConflict, match="already applied"):
+        prepare_lifecycle(registry(), current, lifecycle, unlocked_at=1,
+                          opening_book_id="book1", opening_content_version=1,
+                          opening_scene_id="start")

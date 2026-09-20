@@ -20,7 +20,7 @@
  * not wired into the running application.
  */
 import { PlayerState } from '../types';
-import { BOOKS, ALL_SCENES, BOOK_VERSIONS } from '../data/story';
+import { BOOKS, ALL_SCENES, BOOK_VERSIONS, SERIES } from '../data/story';
 import { INITIAL_CHARACTERS } from '../data/characters';
 import { INITIAL_ACHIEVEMENTS } from '../data/achievements';
 import { CONTENT_SCHEMA_VERSION } from '../content/schema';
@@ -96,6 +96,9 @@ export function buildRegistry() {
 
   return {
     contentSchemaVersion: CONTENT_SCHEMA_VERSION,
+    series: {
+      books: SERIES.books.map(({ id, order, status }) => ({ id, order, status })),
+    },
     rules: TRUSTED_RULES,
     knownAchievements: Object.keys(INITIAL_ACHIEVEMENTS),
     characters,

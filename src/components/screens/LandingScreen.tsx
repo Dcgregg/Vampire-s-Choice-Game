@@ -1,6 +1,6 @@
 import React from 'react';
 import { useGameState } from '../../state/useGameState';
-import { BookOpen, Sparkles, Play, Info, Flame, Droplet } from 'lucide-react';
+import { BookOpen, Sparkles, Play, Info, Flame, Droplet, Library } from 'lucide-react';
 import { PWAInstallButton } from '../common/PWAInstallButton';
 
 export const LandingScreen: React.FC = () => {
@@ -86,6 +86,15 @@ export const LandingScreen: React.FC = () => {
               >
                 <Play className="h-4 w-4 fill-current text-[#fae092]" />
                 <span>Continue Story</span>
+              </button>
+
+              <button
+                id="landing-library-btn"
+                onClick={() => setScreen('library')}
+                className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-[#120a1a]/80 px-6 py-3 font-interface text-xs font-semibold uppercase tracking-wider text-[#d6cbbe]"
+              >
+                <Library className="h-3.5 w-3.5 text-[#e5c158]" />
+                <span>Story Library</span>
               </button>
 
               <button
