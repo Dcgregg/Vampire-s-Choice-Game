@@ -278,6 +278,30 @@ export class TrustedProgressionQueue {
     await this.reconcile(this.generation);
   }
 
+  /**
+   * Abandon only the head event after the server has durably rejected it as a
+   * checkpoint conflict, then reload the authoritative ledger. Confirmed
+   * progression is never changed locally by this recovery action.
+   */
+  async discardConflictingEvent(): Promise<boolean> {
+    if (
+      !this.enabled
+      || !this.activeScope
+      || !this.scopeUsable
+      || this.status !== 'conflict'
+      || this.pending.length === 0
+    ) return false;
+
+    const generation = ++this.generation;
+    this.pending.shift();
+    this.persist();
+    this.lastError = undefined;
+    this.status = 'bootstrapping';
+    this.emit();
+    await this.reconcile(generation);
+    return true;
+  }
+
   /** Stop reconciliation without deleting the account-scoped pending intent. */
   pauseForAccountSwitch(): void {
     if (!this.enabled || !this.activeScope) return;

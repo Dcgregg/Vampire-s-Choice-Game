@@ -208,6 +208,54 @@ describe('trusted progression durable queue', () => {
     expect(api.submit.mock.calls.at(-1)?.[0].eventId).toBe('kept-event');
   });
 
+  it('discards only a durably rejected conflict and reloads confirmed progression', async () => {
+    const storage = new MemoryStorage();
+    const api = {
+      bootstrap: vi.fn()
+        .mockResolvedValueOnce(ledger())
+        .mockResolvedValueOnce(ledger(3, 80, 'b1_c2_s1')),
+      submit: vi.fn().mockRejectedValue(
+        new TrustedProgressionError('progression_conflict', 409, false),
+      ),
+    };
+    const queue = makeQueue(storage, api, ['stale-event']);
+    await queue.enterAccount('account-a');
+    queue.recordChoice(input());
+    await queue.flush();
+
+    expect(queue.snapshot()).toMatchObject({
+      status: 'conflict', pendingCount: 1, confirmedCoins: 50,
+    });
+    await expect(queue.discardConflictingEvent()).resolves.toBe(true);
+    expect(queue.snapshot()).toMatchObject({
+      status: 'ready', pendingCount: 0, confirmedCoins: 80,
+      progressionRevision: 3, canChoose: true,
+    });
+    expect(api.bootstrap).toHaveBeenCalledTimes(2);
+    expect(api.submit).toHaveBeenCalledTimes(1);
+
+    const returning = makeQueue(storage, api);
+    await returning.enterAccount('account-a');
+    expect(returning.snapshot().pendingCount).toBe(0);
+  });
+
+  it('refuses to discard retryable or unconfirmed queue entries', async () => {
+    const storage = new MemoryStorage();
+    const api = {
+      bootstrap: vi.fn().mockResolvedValue(ledger()),
+      submit: vi.fn().mockRejectedValue(
+        new TrustedProgressionError('offline', 0, true),
+      ),
+    };
+    const queue = makeQueue(storage, api, ['offline-event']);
+    await queue.enterAccount('account-a');
+    queue.recordChoice(input());
+    await queue.flush();
+
+    await expect(queue.discardConflictingEvent()).resolves.toBe(false);
+    expect(queue.snapshot()).toMatchObject({ status: 'offline', pendingCount: 1 });
+  });
+
   it('isolates persisted queues by account scope', async () => {
     const storage = new MemoryStorage();
     const api = {

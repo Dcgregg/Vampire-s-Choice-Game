@@ -61,14 +61,29 @@ export const TrustedProgressionStatus: React.FC = () => {
           </button>
         )}
         {snapshot.status === 'conflict' && (
-          <button
-            type="button"
-            data-testid="trusted-progression-pause"
-            onClick={() => trustedProgressionQueue.pauseForAccountSwitch()}
-            className="rounded-full border border-white/20 px-2 py-0.5 font-semibold text-stone-300 hover:border-white/40"
-          >
-            Pause &amp; switch account
-          </button>
+          <>
+            <button
+              type="button"
+              data-testid="trusted-progression-discard"
+              onClick={() => {
+                const confirmed = window.confirm(
+                  'Discard the rejected pending choice and resync to your confirmed cloud progression? No confirmed BloodCoins will be removed.',
+                );
+                if (confirmed) void trustedProgressionQueue.discardConflictingEvent();
+              }}
+              className="rounded-full border border-amber-400/40 px-2 py-0.5 font-semibold text-amber-200 hover:border-amber-300"
+            >
+              Discard stale choice &amp; resync
+            </button>
+            <button
+              type="button"
+              data-testid="trusted-progression-pause"
+              onClick={() => trustedProgressionQueue.pauseForAccountSwitch()}
+              className="rounded-full border border-white/20 px-2 py-0.5 font-semibold text-stone-300 hover:border-white/40"
+            >
+              Pause &amp; switch account
+            </button>
+          </>
         )}
       </div>
     </div>
