@@ -37,6 +37,7 @@ from progression.feature_gated_routes import (
     trusted_progression_routes_enabled,
 )
 from progression.trusted_content import load_registry
+from admin_access import configured_admin_emails, is_admin_email
 
 load_dotenv()
 
@@ -47,6 +48,7 @@ GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
 GOOGLE_REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI")
 GOOGLE_OAUTH_SUCCESS_URL = os.environ.get("GOOGLE_OAUTH_SUCCESS_URL", "/")
+ADMIN_EMAILS = configured_admin_emails(os.environ.get("ADMIN_EMAILS"))
 SESSION_TTL_DAYS = 7
 SESSION_COOKIE_NAME = "__Host-vc_session"
 LEGACY_SESSION_COOKIE_NAME = "session_token"
@@ -422,6 +424,39 @@ async def google_auth_callback(request: Request, code: str, state: str):
 async def auth_me(request: Request):
     user = await _current_user(request)
     return {"email": user["email"], "name": user.get("name"), "picture": user.get("picture")}
+
+
+# ===================== Phase 7 admin catalogue (read-only) =====================
+def _require_admin(user: Dict[str, Any]) -> None:
+    if not is_admin_email(user.get("email"), ADMIN_EMAILS):
+        raise HTTPException(status_code=403, detail={"error": "admin_required"})
+
+
+@api.get("/admin/me")
+async def admin_me(request: Request):
+    user = await _current_user(request)
+    return {"isAdmin": is_admin_email(user.get("email"), ADMIN_EMAILS)}
+
+
+@api.get("/admin/content-catalog")
+async def admin_content_catalog(request: Request):
+    user = await _current_user(request)
+    _require_admin(user)
+    registry = load_registry()
+    books = registry.get("books", {})
+    return {
+        "series": registry.get("series", {}).get("books", []),
+        "books": [
+            {
+                "id": book_id,
+                "version": book.get("version"),
+                "startingSceneId": book.get("startingSceneId"),
+                "sceneCount": len(book.get("scenes", {})),
+            }
+            for book_id, book in books.items()
+            if isinstance(book, dict)
+        ],
+    }
 
 
 @api.post("/auth/logout")

@@ -13,6 +13,7 @@ import { CharacterCreationScreen } from './components/screens/CharacterCreationS
 import { ReadingScreen } from './components/screens/ReadingScreen';
 import { BookCompleteScreen } from './components/screens/BookCompleteScreen';
 import { LibraryScreen } from './components/screens/LibraryScreen';
+import { AdminScreen } from './components/screens/AdminScreen';
 import { CharacterScreen } from './components/screens/CharacterScreen';
 import { RelationshipsScreen } from './components/screens/RelationshipsScreen';
 import { AchievementsScreen } from './components/screens/AchievementsScreen';
@@ -37,6 +38,7 @@ const MainContent: React.FC = () => {
         {activeScreen === 'reading' && <ReadingScreen />}
         {activeScreen === 'book_complete' && <BookCompleteScreen />}
         {activeScreen === 'library' && <LibraryScreen />}
+        {activeScreen === 'admin' && <AdminScreen />}
         {activeScreen === 'character' && <CharacterScreen />}
         {activeScreen === 'relationships' && <RelationshipsScreen />}
         {activeScreen === 'achievements' && <AchievementsScreen />}

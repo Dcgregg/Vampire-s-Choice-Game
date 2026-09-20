@@ -33,6 +33,7 @@ export type ScreenType =
   | 'reading'
   | 'book_complete'
   | 'library'
+  | 'admin'
   | 'character'
   | 'relationships'
   | 'achievements'

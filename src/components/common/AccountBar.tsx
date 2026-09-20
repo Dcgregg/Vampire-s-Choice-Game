@@ -1,7 +1,9 @@
 import React from 'react';
 import { useAuth } from '../../auth/AuthContext';
 import { syncManager, SyncStatus, PushConflict } from '../../sync/syncManager';
-import { LogIn, LogOut, Cloud, CloudOff, Loader2, AlertTriangle, Check, X } from 'lucide-react';
+import { LogIn, LogOut, Cloud, CloudOff, Loader2, AlertTriangle, Check, X, ShieldCheck } from 'lucide-react';
+import { getAdminCatalog } from '../../sync/cloudClient';
+import { useGameState } from '../../state/useGameState';
 
 const STATUS_META: Record<SyncStatus, { label: string; Icon: any; cls: string }> = {
   idle: { label: 'Local save', Icon: Cloud, cls: 'text-stone-400' },
@@ -130,6 +132,9 @@ const PushConflictModal: React.FC = () => {
 
 export const AccountBar: React.FC = () => {
   const { user, loading, login, logout, conflict, resolveConflict, error, resolving, retryLink, dismissError } = useAuth();
+  const { setScreen } = useGameState();
+  const [isAdmin, setIsAdmin] = React.useState(false);
+  React.useEffect(() => { if (!user) { setIsAdmin(false); return; } void getAdminCatalog().then((catalog) => setIsAdmin(Boolean(catalog))).catch(() => setIsAdmin(false)); }, [user]);
 
   return (
     <>
@@ -161,6 +166,8 @@ export const AccountBar: React.FC = () => {
           </div>
         )}
         {loading ? null : user ? (
+          <>
+          {isAdmin && <button onClick={() => setScreen('admin')} title="Story admin" className="flex h-7 w-7 items-center justify-center rounded-full border border-[#c5a059]/50 text-[#e5c158]"><ShieldCheck className="h-3.5 w-3.5" /></button>}
           <button
             data-testid="account-logout-btn"
             onClick={() => void logout()}
@@ -170,6 +177,7 @@ export const AccountBar: React.FC = () => {
             <LogOut className="h-3 w-3" />
             <span className="hidden sm:inline">Sign out</span>
           </button>
+          </>
         ) : (
           <button
             data-testid="account-login-btn"
