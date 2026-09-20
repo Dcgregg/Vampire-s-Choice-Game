@@ -1,5 +1,5 @@
 {
-  "experimentalServices": {
+  "services": {
     "backend": {
       "entrypoint": "backend/server.py",
       "routePrefix": "/backend"
