@@ -70,6 +70,7 @@ users = db["users"]
 sessions = db["user_sessions"]
 progression_ledgers = db["progression_ledgers"]
 progression_events = db["progression_events"]
+admin_drafts = db["admin_drafts"]
 
 app = FastAPI(title="Vampire's Choice Cloud Save API")
 auth_logger = logging.getLogger("vampires_choice.auth")
@@ -106,6 +107,8 @@ async def _ensure_indexes():
     await account_saves.create_index("userId", unique=True)
     await sessions.create_index("session_token", unique=True)
     await users.create_index("email", unique=True)
+    await admin_drafts.create_index("draftId", unique=True)
+    await admin_drafts.create_index([("bookId", 1), ("updatedAt", -1)])
     await ensure_trusted_progression_indexes(
         activation_value=TRUSTED_PROGRESSION_ACTIVATION,
         ledgers=progression_ledgers,
@@ -426,7 +429,7 @@ async def auth_me(request: Request):
     return {"email": user["email"], "name": user.get("name"), "picture": user.get("picture")}
 
 
-# ===================== Phase 7 admin catalogue (read-only) =====================
+# ===================== Phase 7/8 admin workspace =====================
 def _require_admin(user: Dict[str, Any]) -> None:
     if not is_admin_email(user.get("email"), ADMIN_EMAILS):
         raise HTTPException(status_code=403, detail={"error": "admin_required"})
@@ -457,6 +460,84 @@ async def admin_content_catalog(request: Request):
             if isinstance(book, dict)
         ],
     }
+
+
+class AdminDraftInput(BaseModel):
+    """A deliberately small authoring format.
+
+    Drafts are not player-facing content and are never loaded by the trusted
+    progression reducer. Publishing remains a separate, reviewable step.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    bookId: str = Field(min_length=1, max_length=80)
+    title: str = Field(min_length=1, max_length=160)
+    synopsis: str = Field(max_length=8000)
+    branchNotes: str = Field(max_length=12000)
+
+
+class AdminDraftUpdate(AdminDraftInput):
+    baseRevision: int = Field(ge=1)
+
+
+def _public_admin_draft(doc: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "draftId": doc["draftId"],
+        "bookId": doc["bookId"],
+        "title": doc["title"],
+        "synopsis": doc["synopsis"],
+        "branchNotes": doc["branchNotes"],
+        "revision": doc["revision"],
+        "createdAt": doc["createdAt"],
+        "updatedAt": doc["updatedAt"],
+        "updatedBy": doc["updatedBy"],
+    }
+
+
+@api.get("/admin/drafts")
+async def list_admin_drafts(request: Request):
+    user = await _current_user(request)
+    _require_admin(user)
+    docs = await admin_drafts.find({}, {"_id": 0}).sort("updatedAt", -1).to_list(length=100)
+    return {"drafts": [_public_admin_draft(doc) for doc in docs]}
+
+
+@api.post("/admin/drafts", status_code=201)
+async def create_admin_draft(request: Request, payload: AdminDraftInput):
+    user = await _current_user(request)
+    _require_admin(user)
+    now = _now()
+    doc = {
+        "draftId": f"draft_{uuid.uuid4().hex}",
+        **payload.model_dump(),
+        "revision": 1,
+        "createdAt": now,
+        "updatedAt": now,
+        "updatedBy": user["email"],
+    }
+    await admin_drafts.insert_one(doc)
+    return _public_admin_draft(doc)
+
+
+@api.put("/admin/drafts/{draft_id}")
+async def update_admin_draft(draft_id: str, request: Request, payload: AdminDraftUpdate):
+    user = await _current_user(request)
+    _require_admin(user)
+    if not re.fullmatch(r"draft_[0-9a-f]{32}", draft_id):
+        raise HTTPException(status_code=400, detail={"error": "invalid_draft_id"})
+    now = _now()
+    changes = payload.model_dump(exclude={"baseRevision"})
+    updated = await admin_drafts.find_one_and_update(
+        {"draftId": draft_id, "revision": payload.baseRevision},
+        {"$set": {**changes, "updatedAt": now, "updatedBy": user["email"]}, "$inc": {"revision": 1}},
+        return_document=True,
+    )
+    if updated is None:
+        current = await admin_drafts.find_one({"draftId": draft_id}, {"_id": 0})
+        if current is None:
+            raise HTTPException(status_code=404, detail={"error": "draft_not_found"})
+        return JSONResponse(status_code=409, content={"error": "revision_conflict", "currentDraft": _public_admin_draft(current)})
+    return _public_admin_draft(updated)
 
 
 @api.post("/auth/logout")

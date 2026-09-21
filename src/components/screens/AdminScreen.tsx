@@ -1,11 +1,40 @@
 import React from 'react';
-import { ShieldCheck, BookOpen, LockKeyhole } from 'lucide-react';
-import { AdminCatalog, getAdminCatalog } from '../../sync/cloudClient';
+import { ShieldCheck, BookOpen, LockKeyhole, Plus, Save } from 'lucide-react';
+import { AdminCatalog, AdminDraft, AdminDraftInput, createAdminDraft, getAdminCatalog, getAdminDrafts, updateAdminDraft } from '../../sync/cloudClient';
+
+const emptyDraft: AdminDraftInput = { bookId: 'book2', title: '', synopsis: '', branchNotes: '' };
 
 export const AdminScreen: React.FC = () => {
   const [catalog, setCatalog] = React.useState<AdminCatalog | null | undefined>(undefined);
-  React.useEffect(() => { void getAdminCatalog().then(setCatalog).catch(() => setCatalog(null)); }, []);
+  const [drafts, setDrafts] = React.useState<AdminDraft[] | null | undefined>(undefined);
+  const [selected, setSelected] = React.useState<AdminDraft | null>(null);
+  const [form, setForm] = React.useState<AdminDraftInput>(emptyDraft);
+  const [saving, setSaving] = React.useState(false);
+  const [notice, setNotice] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    void Promise.all([getAdminCatalog(), getAdminDrafts()])
+      .then(([nextCatalog, nextDrafts]) => { setCatalog(nextCatalog); setDrafts(nextDrafts); })
+      .catch(() => { setCatalog(null); setDrafts(null); });
+  }, []);
+  const chooseDraft = (draft: AdminDraft | null) => {
+    setSelected(draft);
+    setForm(draft ? { bookId: draft.bookId, title: draft.title, synopsis: draft.synopsis, branchNotes: draft.branchNotes } : emptyDraft);
+    setNotice(null);
+  };
+  const save = async () => {
+    if (!form.title.trim()) { setNotice('Give the draft a title first.'); return; }
+    setSaving(true); setNotice(null);
+    try {
+      const saved = selected
+        ? await updateAdminDraft(selected.draftId, form, selected.revision)
+        : await createAdminDraft(form);
+      setDrafts((items) => [saved, ...(items ?? []).filter((item) => item.draftId !== saved.draftId)]);
+      chooseDraft(saved); setNotice('Draft saved. It is not published to players.');
+    } catch (error) {
+      setNotice(error instanceof Error && error.message === 'draft_conflict' ? 'This draft changed elsewhere. Reload before saving again.' : 'Could not save the draft.');
+    } finally { setSaving(false); }
+  };
   if (catalog === undefined) return <div className="p-8 text-stone-400">Loading admin catalogue…</div>;
   if (!catalog) return <div className="mx-auto max-w-md p-10 text-center text-stone-300"><LockKeyhole className="mx-auto h-8 w-8 text-rose-300" /><h1 className="mt-4 font-display text-2xl">Admin access required</h1><p className="mt-2 text-sm text-stone-400">Sign in with an allow-listed administrator account.</p></div>;
-  return <div className="mx-auto max-w-2xl p-6 sm:p-10"><div className="flex items-center gap-3"><ShieldCheck className="h-7 w-7 text-[#e5c158]" /><div><h1 className="font-display text-3xl text-[#f5f0e6]">Story Admin</h1><p className="text-sm text-stone-400">Read-only catalogue — editing and publishing are not enabled yet.</p></div></div><div className="mt-8 grid gap-3">{catalog.series.sort((a,b) => a.order-b.order).map((ref) => { const book = catalog.books.find((entry) => entry.id === ref.id); return <article key={ref.id} className="rounded-xl border border-white/10 bg-[#150f1f] p-4"><div className="flex items-center justify-between"><div className="flex items-center gap-2"><BookOpen className="h-4 w-4 text-[#c5a059]" /><strong className="text-[#f5f0e6]">Book {ref.order}: {ref.id}</strong></div><span className="text-xs uppercase text-stone-400">{ref.status}</span></div><p className="mt-2 text-sm text-stone-400">{book ? `${book.sceneCount} scenes · content v${book.version}` : 'No bundled content yet'}</p></article>; })}</div></div>;
+  return <div className="mx-auto max-w-5xl p-6 sm:p-10"><div className="flex items-center gap-3"><ShieldCheck className="h-7 w-7 text-[#e5c158]" /><div><h1 className="font-display text-3xl text-[#f5f0e6]">Story Admin</h1><p className="text-sm text-stone-400">Draft workspace — saved drafts are not player-facing content.</p></div></div><div className="mt-8 grid gap-6 lg:grid-cols-[0.8fr_1.2fr]"><section><h2 className="text-sm font-semibold uppercase tracking-wider text-[#c5a059]">Published catalogue</h2><div className="mt-3 grid gap-3">{catalog.series.sort((a,b) => a.order-b.order).map((ref) => { const book = catalog.books.find((entry) => entry.id === ref.id); return <article key={ref.id} className="rounded-xl border border-white/10 bg-[#150f1f] p-4"><div className="flex items-center justify-between"><div className="flex items-center gap-2"><BookOpen className="h-4 w-4 text-[#c5a059]" /><strong className="text-[#f5f0e6]">Book {ref.order}: {ref.id}</strong></div><span className="text-xs uppercase text-stone-400">{ref.status}</span></div><p className="mt-2 text-sm text-stone-400">{book ? `${book.sceneCount} scenes · content v${book.version}` : 'No bundled content yet'}</p></article>; })}</div><div className="mt-6 flex items-center justify-between"><h2 className="text-sm font-semibold uppercase tracking-wider text-[#c5a059]">Drafts</h2><button onClick={() => chooseDraft(null)} className="rounded border border-[#c5a059]/60 p-1.5 text-[#e5c158]" title="New draft"><Plus className="h-4 w-4" /></button></div><div className="mt-3 grid gap-2">{drafts === undefined ? <p className="text-sm text-stone-400">Loading drafts…</p> : (drafts ?? []).map((draft) => <button key={draft.draftId} onClick={() => chooseDraft(draft)} className={`rounded-lg border p-3 text-left ${selected?.draftId === draft.draftId ? 'border-[#c5a059] bg-[#25182d]' : 'border-white/10 bg-[#150f1f]'}`}><strong className="block text-sm text-[#f5f0e6]">{draft.title}</strong><span className="text-xs text-stone-400">{draft.bookId} · v{draft.revision}</span></button>)}</div></section><section className="rounded-xl border border-white/10 bg-[#150f1f] p-5"><h2 className="font-display text-xl text-[#f5f0e6]">{selected ? 'Edit draft' : 'New draft'}</h2><label className="mt-4 block text-sm text-stone-300">Book ID<input value={form.bookId} onChange={(e) => setForm({ ...form, bookId: e.target.value })} className="mt-1 w-full rounded border border-white/15 bg-black/20 p-2 text-[#f5f0e6]" /></label><label className="mt-4 block text-sm text-stone-300">Title<input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} className="mt-1 w-full rounded border border-white/15 bg-black/20 p-2 text-[#f5f0e6]" /></label><label className="mt-4 block text-sm text-stone-300">Synopsis<textarea value={form.synopsis} onChange={(e) => setForm({ ...form, synopsis: e.target.value })} rows={5} className="mt-1 w-full rounded border border-white/15 bg-black/20 p-2 text-[#f5f0e6]" /></label><label className="mt-4 block text-sm text-stone-300">Branch notes<textarea value={form.branchNotes} onChange={(e) => setForm({ ...form, branchNotes: e.target.value })} rows={7} className="mt-1 w-full rounded border border-white/15 bg-black/20 p-2 text-[#f5f0e6]" /></label>{notice && <p className="mt-3 text-sm text-[#e5c158]">{notice}</p>}<button disabled={saving} onClick={() => void save()} className="mt-5 inline-flex items-center gap-2 rounded bg-[#7d0828] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"><Save className="h-4 w-4" />{saving ? 'Saving…' : 'Save draft'}</button></section></div></div>;
 };
