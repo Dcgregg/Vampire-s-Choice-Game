@@ -28,3 +28,24 @@ def test_server_admin_guard_requires_exact_allow_listed_email(monkeypatch):
     finally:
         server.client.close()
         sys.modules.pop("server", None)
+
+
+def test_admin_draft_validation_is_bounded_and_rejects_unknown_fields(monkeypatch):
+    monkeypatch.setenv("MONGO_URL", "mongodb://127.0.0.1:27017")
+    monkeypatch.setenv("DB_NAME", "phase8_admin_draft_test")
+    import importlib
+    import sys
+    sys.modules.pop("server", None)
+    server = importlib.import_module("server")
+    try:
+        valid = server.AdminDraftInput(
+            bookId="book2", title="The Ashen Court", synopsis="A short premise.", branchNotes="Two routes meet at the finale.",
+        )
+        assert valid.bookId == "book2"
+        with pytest.raises(Exception):
+            server.AdminDraftInput(bookId="book2", title="x", synopsis="", branchNotes="", unexpected=True)
+        with pytest.raises(Exception):
+            server.AdminDraftInput(bookId="book2", title="x" * 161, synopsis="", branchNotes="")
+    finally:
+        server.client.close()
+        sys.modules.pop("server", None)

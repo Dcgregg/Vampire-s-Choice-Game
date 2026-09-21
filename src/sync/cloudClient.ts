@@ -65,6 +65,21 @@ export interface AdminCatalog {
   books: Array<{ id: string; version: number; startingSceneId: string; sceneCount: number }>;
 }
 
+export interface AdminDraft {
+  draftId: string;
+  bookId: string;
+  title: string;
+  synopsis: string;
+  branchNotes: string;
+  status: 'draft' | 'ready_for_review';
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+  updatedBy: string;
+}
+
+export type AdminDraftInput = Pick<AdminDraft, 'bookId' | 'title' | 'synopsis' | 'branchNotes'>;
+
 export async function getMe(): Promise<PublicUser | null> {
   const r = await fetch(`${API_BASE}/auth/me`, { credentials: 'include' });
   if (!r.ok) return null;
@@ -76,6 +91,36 @@ export async function getAdminCatalog(): Promise<AdminCatalog | null> {
   if (r.status === 401 || r.status === 403) return null;
   if (!r.ok) throw new Error(`getAdminCatalog failed: ${r.status}`);
   return (await r.json()) as AdminCatalog;
+}
+
+export async function getAdminDrafts(): Promise<AdminDraft[] | null> {
+  const r = await fetch(`${API_BASE}/admin/drafts`, { credentials: 'include' });
+  if (r.status === 401 || r.status === 403) return null;
+  if (!r.ok) throw new Error(`getAdminDrafts failed: ${r.status}`);
+  return ((await r.json()) as { drafts: AdminDraft[] }).drafts;
+}
+
+export async function createAdminDraft(input: AdminDraftInput): Promise<AdminDraft> {
+  const r = await fetch(`${API_BASE}/admin/drafts`, {
+    method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),
+  });
+  if (!r.ok) throw new Error(`createAdminDraft failed: ${r.status}`);
+  return (await r.json()) as AdminDraft;
+}
+
+export async function updateAdminDraft(draftId: string, input: AdminDraftInput, baseRevision: number): Promise<AdminDraft> {
+  const r = await fetch(`${API_BASE}/admin/drafts/${draftId}`, {
+    method: 'PUT', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...input, baseRevision }),
+  });
+  if (r.status === 409) throw new Error('draft_conflict');
+  if (!r.ok) throw new Error(`updateAdminDraft failed: ${r.status}`);
+  return (await r.json()) as AdminDraft;
+}
+
+export async function requestAdminDraftReview(draftId: string): Promise<AdminDraft> {
+  const r = await fetch(`${API_BASE}/admin/drafts/${draftId}/request-review`, { method: 'POST', credentials: 'include' });
+  if (!r.ok) throw new Error(`requestAdminDraftReview failed: ${r.status}`);
+  return (await r.json()) as AdminDraft;
 }
 
 export async function logoutApi(): Promise<void> {
