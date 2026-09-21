@@ -79,6 +79,7 @@ export interface AdminDraft {
 }
 
 export type AdminDraftInput = Pick<AdminDraft, 'bookId' | 'title' | 'synopsis' | 'branchNotes'>;
+export interface AdminDraftValidation { draftId: string; valid: boolean; issues: Array<{ code: string; message: string }>; }
 
 export async function getMe(): Promise<PublicUser | null> {
   const r = await fetch(`${API_BASE}/auth/me`, { credentials: 'include' });
@@ -121,6 +122,12 @@ export async function requestAdminDraftReview(draftId: string): Promise<AdminDra
   const r = await fetch(`${API_BASE}/admin/drafts/${draftId}/request-review`, { method: 'POST', credentials: 'include' });
   if (!r.ok) throw new Error(`requestAdminDraftReview failed: ${r.status}`);
   return (await r.json()) as AdminDraft;
+}
+
+export async function validateAdminDraft(draftId: string): Promise<AdminDraftValidation> {
+  const r = await fetch(`${API_BASE}/admin/drafts/${draftId}/validation`, { credentials: 'include' });
+  if (!r.ok) throw new Error(`validateAdminDraft failed: ${r.status}`);
+  return (await r.json()) as AdminDraftValidation;
 }
 
 export async function logoutApi(): Promise<void> {
