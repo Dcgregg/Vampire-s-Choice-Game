@@ -71,6 +71,7 @@ export interface AdminDraft {
   title: string;
   synopsis: string;
   branchNotes: string;
+  status: 'draft' | 'ready_for_review';
   revision: number;
   createdAt: string;
   updatedAt: string;
@@ -113,6 +114,12 @@ export async function updateAdminDraft(draftId: string, input: AdminDraftInput, 
   });
   if (r.status === 409) throw new Error('draft_conflict');
   if (!r.ok) throw new Error(`updateAdminDraft failed: ${r.status}`);
+  return (await r.json()) as AdminDraft;
+}
+
+export async function requestAdminDraftReview(draftId: string): Promise<AdminDraft> {
+  const r = await fetch(`${API_BASE}/admin/drafts/${draftId}/request-review`, { method: 'POST', credentials: 'include' });
+  if (!r.ok) throw new Error(`requestAdminDraftReview failed: ${r.status}`);
   return (await r.json()) as AdminDraft;
 }
 

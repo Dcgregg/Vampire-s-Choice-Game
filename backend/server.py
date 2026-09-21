@@ -487,6 +487,7 @@ def _public_admin_draft(doc: Dict[str, Any]) -> Dict[str, Any]:
         "title": doc["title"],
         "synopsis": doc["synopsis"],
         "branchNotes": doc["branchNotes"],
+        "status": doc.get("status", "draft"),
         "revision": doc["revision"],
         "createdAt": doc["createdAt"],
         "updatedAt": doc["updatedAt"],
@@ -511,6 +512,7 @@ async def create_admin_draft(request: Request, payload: AdminDraftInput):
         "draftId": f"draft_{uuid.uuid4().hex}",
         **payload.model_dump(),
         "revision": 1,
+        "status": "draft",
         "createdAt": now,
         "updatedAt": now,
         "updatedBy": user["email"],
@@ -537,6 +539,27 @@ async def update_admin_draft(draft_id: str, request: Request, payload: AdminDraf
         if current is None:
             raise HTTPException(status_code=404, detail={"error": "draft_not_found"})
         return JSONResponse(status_code=409, content={"error": "revision_conflict", "currentDraft": _public_admin_draft(current)})
+    return _public_admin_draft(updated)
+
+
+@api.post("/admin/drafts/{draft_id}/request-review")
+async def request_admin_draft_review(draft_id: str, request: Request):
+    """Move a finished draft into review; this never publishes game content."""
+    user = await _current_user(request)
+    _require_admin(user)
+    if not re.fullmatch(r"draft_[0-9a-f]{32}", draft_id):
+        raise HTTPException(status_code=400, detail={"error": "invalid_draft_id"})
+    now = _now()
+    updated = await admin_drafts.find_one_and_update(
+        {"draftId": draft_id, "status": {"$ne": "ready_for_review"}},
+        {"$set": {"status": "ready_for_review", "updatedAt": now, "updatedBy": user["email"]}, "$inc": {"revision": 1}},
+        return_document=True,
+    )
+    if updated is None:
+        current = await admin_drafts.find_one({"draftId": draft_id}, {"_id": 0})
+        if current is None:
+            raise HTTPException(status_code=404, detail={"error": "draft_not_found"})
+        return _public_admin_draft(current)
     return _public_admin_draft(updated)
 
 
