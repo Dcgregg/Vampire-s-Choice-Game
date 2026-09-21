@@ -563,6 +563,29 @@ async def request_admin_draft_review(draft_id: str, request: Request):
     return _public_admin_draft(updated)
 
 
+@api.get("/admin/drafts/{draft_id}/validation")
+async def validate_admin_draft(draft_id: str, request: Request):
+    """Return editorial readiness checks without mutating a draft or publishing it."""
+    user = await _current_user(request)
+    _require_admin(user)
+    if not re.fullmatch(r"draft_[0-9a-f]{32}", draft_id):
+        raise HTTPException(status_code=400, detail={"error": "invalid_draft_id"})
+    draft = await admin_drafts.find_one({"draftId": draft_id}, {"_id": 0})
+    if draft is None:
+        raise HTTPException(status_code=404, detail={"error": "draft_not_found"})
+    known_books = {item.get("id") for item in load_registry().get("series", {}).get("books", []) if isinstance(item, dict)}
+    issues = []
+    if draft.get("bookId") not in known_books:
+        issues.append({"code": "unknown_book", "message": "Choose a book from the series catalogue."})
+    if len(draft.get("title", "").strip()) < 3:
+        issues.append({"code": "title_too_short", "message": "Use a title of at least 3 characters."})
+    if len(draft.get("synopsis", "").strip()) < 40:
+        issues.append({"code": "synopsis_too_short", "message": "Add a synopsis of at least 40 characters."})
+    if len(draft.get("branchNotes", "").strip()) < 40:
+        issues.append({"code": "branch_notes_too_short", "message": "Add at least 40 characters of branch notes."})
+    return {"draftId": draft_id, "valid": not issues, "issues": issues}
+
+
 @api.post("/auth/logout")
 async def auth_logout(request: Request, response: Response):
     token = (
