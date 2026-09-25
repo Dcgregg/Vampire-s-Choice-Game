@@ -574,6 +574,65 @@ def _openrouter_json(prompt: str) -> Dict[str, Any]:
         raise HTTPException(status_code=502, detail={"error": "openrouter_generation_failed"})
 
 
+def _generated_identifier(value: Any, fallback: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9_-]+", "-", str(value or "")).strip("-_")
+    return (cleaned[:80] or fallback)
+
+
+def _unique_generated_identifier(value: Any, fallback: str, used: set[str]) -> str:
+    base = _generated_identifier(value, fallback)
+    candidate, suffix = base, 2
+    while candidate in used:
+        ending = f"-{suffix}"
+        candidate = f"{base[:80 - len(ending)]}{ending}"
+        suffix += 1
+    used.add(candidate)
+    return candidate
+
+
+def _normalise_generated_draft(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """Accept small presentational variations from free models, then validate strictly."""
+    raw_scenes = raw.get("scenes", raw.get("nodes", [])) if isinstance(raw, dict) else []
+    original_to_clean = {}
+    scenes = []
+    used_scene_ids: set[str] = set()
+    for index, item in enumerate(raw_scenes if isinstance(raw_scenes, list) else []):
+        if not isinstance(item, dict):
+            continue
+        original_id = str(item.get("sceneId", item.get("id", "")))
+        scene_id = _unique_generated_identifier(original_id, f"scene-{index + 1}", used_scene_ids)
+        original_to_clean[original_id] = scene_id
+        choices = []
+        used_choice_ids: set[str] = set()
+        for choice_index, choice in enumerate(item.get("choices", []) if isinstance(item.get("choices", []), list) else []):
+            if not isinstance(choice, dict):
+                continue
+            target = choice.get("nextSceneId", choice.get("next", choice.get("destination")))
+            choices.append({
+                "choiceId": _unique_generated_identifier(choice.get("choiceId", choice.get("id")), f"choice-{choice_index + 1}", used_choice_ids),
+                "text": choice.get("text", choice.get("label", "")),
+                "nextSceneId": target,
+                "effectsNotes": choice.get("effectsNotes", choice.get("effects", "")),
+            })
+        scenes.append({
+            "sceneId": scene_id,
+            "chapterNumber": 1,
+            "title": item.get("title", ""),
+            "body": item.get("body", item.get("content", item.get("text", ""))),
+            "choices": choices,
+        })
+    for scene in scenes:
+        for choice in scene["choices"]:
+            if choice["nextSceneId"] is not None:
+                choice["nextSceneId"] = original_to_clean.get(str(choice["nextSceneId"]), _generated_identifier(choice["nextSceneId"], "missing-scene"))
+    return {
+        "title": raw.get("title", "") if isinstance(raw, dict) else "",
+        "synopsis": raw.get("synopsis", raw.get("summary", "")) if isinstance(raw, dict) else "",
+        "branchNotes": raw.get("branchNotes", raw.get("notes", "")) if isinstance(raw, dict) else "",
+        "scenes": scenes,
+    }
+
+
 def _sample_story_scenes() -> List[Dict[str, Any]]:
     """A complete, private sample for exercising the admin editor and playtest."""
     return [
@@ -667,7 +726,7 @@ async def generate_admin_draft(request: Request, payload: AdminAiDraftRequest):
     schema = '{"title":"string","synopsis":"string","branchNotes":"string","scenes":[{"sceneId":"id","chapterNumber":1,"title":"string","body":"string","choices":[{"choiceId":"id","text":"string","nextSceneId":"id or null","effectsNotes":"string"}]}]}'
     brief = f"Create a self-contained 3 to 6 scene interactive gothic fantasy romance opening for bookId '{payload.bookId}'. Premise: {payload.premise}\nDesired title: {payload.desiredTitle or 'Choose an evocative original title.'}\nThis is one chapter: every scene must have chapterNumber set to 1. Scenes are branching beats within that single chapter, not separate chapters. Use only scene and choice IDs containing letters, numbers, underscores or hyphens. Every non-null nextSceneId must name a scene in the response. Include choices on most scenes and a terminal final scene. Output exactly this JSON shape: {schema}"
     try:
-        generated = AdminGeneratedDraft.model_validate(_openrouter_json(brief))
+        generated = AdminGeneratedDraft.model_validate(_normalise_generated_draft(_openrouter_json(brief)))
     except HTTPException:
         raise
     except Exception:

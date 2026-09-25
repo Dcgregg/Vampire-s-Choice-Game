@@ -70,3 +70,32 @@ def test_manual_scenes_reject_duplicate_identifiers(monkeypatch):
     finally:
         server.client.close()
         sys.modules.pop("server", None)
+
+
+def test_generated_draft_normalises_common_free_model_variations(monkeypatch):
+    monkeypatch.setenv("MONGO_URL", "mongodb://127.0.0.1:27017")
+    monkeypatch.setenv("DB_NAME", "phase13_generation_normalisation_test")
+    import importlib
+    import sys
+    sys.modules.pop("server", None)
+    server = importlib.import_module("server")
+    try:
+        raw = {
+            "title": "Vamp: To Be or Not to Be?",
+            "summary": "A dangerous new science teacher arrives at Blackthorn Academy.",
+            "notes": "Two routes lead toward a midnight decision.",
+            "scenes": [
+                {"id": "arrival scene", "title": "The First Lesson", "content": "A stranger enters the laboratory.", "choices": [{"id": "listen!", "label": "Listen closely.", "destination": "the hall"}]},
+                {"id": "the hall", "title": "After the Bell", "text": "He waits in the candlelit hall.", "choices": [{"id": "follow", "text": "Follow him.", "next": "midnight"}]},
+                {"id": "midnight", "title": "The Choice", "body": "The final bell sounds.", "choices": []},
+            ],
+        }
+        generated = server.AdminGeneratedDraft.model_validate(server._normalise_generated_draft(raw))
+        assert [scene.chapterNumber for scene in generated.scenes] == [1, 1, 1]
+        assert generated.scenes[0].sceneId == "arrival-scene"
+        assert generated.scenes[0].choices[0].nextSceneId == "the-hall"
+        assert generated.synopsis.startswith("A dangerous")
+        server._validate_manual_scenes(generated.scenes)
+    finally:
+        server.client.close()
+        sys.modules.pop("server", None)
