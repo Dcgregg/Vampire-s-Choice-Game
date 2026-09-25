@@ -1,0 +1,59 @@
+{
+  "contentSchemaVersion": 1,
+  "book": {
+    "id": "book3",
+    "title": "Replace with your book title",
+    "subtitle": "Replace with editorial branch notes that explain the intended routes and endings.",
+    "synopsis": "Replace this with a complete synopsis of at least forty characters, describing the opening premise, tone, stakes, and player choices."
+  },
+  "scenes": [
+    {
+      "id": "opening",
+      "chapterNumber": 1,
+      "sceneTitle": "Replace with opening scene title",
+      "paragraphs": [
+        "Replace with the opening paragraph of your story.",
+        "Add as many paragraphs as needed. They are combined into the private draft's story text during import."
+      ],
+      "choices": [
+        {
+          "id": "follow-clue",
+          "text": "Follow the first clue.",
+          "nextSceneId": "revelation",
+          "consequencesSummary": "Optional private note for the editor about this route."
+        },
+        {
+          "id": "walk-away",
+          "text": "Walk away from the danger.",
+          "nextSceneId": "quiet-ending",
+          "consequencesSummary": "Optional private note for the alternate route."
+        }
+      ]
+    },
+    {
+      "id": "revelation",
+      "chapterNumber": 1,
+      "sceneTitle": "Replace with revelation scene title",
+      "paragraphs": [
+        "Replace with the consequence of following the clue."
+      ],
+      "choices": [
+        {
+          "id": "accept-truth",
+          "text": "Accept the truth.",
+          "nextSceneId": "quiet-ending",
+          "consequencesSummary": "This joins the ending route."
+        }
+      ]
+    },
+    {
+      "id": "quiet-ending",
+      "chapterNumber": 1,
+      "sceneTitle": "Replace with ending scene title",
+      "paragraphs": [
+        "Replace with a short, complete ending for this opening route."
+      ],
+      "choices": []
+    }
+  ]
+}
