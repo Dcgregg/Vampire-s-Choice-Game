@@ -480,6 +480,43 @@ class AdminDraftUpdate(AdminDraftInput):
     baseRevision: int = Field(ge=1)
 
 
+class AdminChoiceInput(BaseModel):
+    """One manually-authored route out of a draft scene."""
+
+    model_config = ConfigDict(extra="forbid")
+    choiceId: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
+    text: str = Field(min_length=1, max_length=300)
+    nextSceneId: Optional[str] = Field(default=None, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
+    effectsNotes: str = Field(default="", max_length=1000)
+
+
+class AdminSceneInput(BaseModel):
+    """A bounded manual scene format, separate from published story content."""
+
+    model_config = ConfigDict(extra="forbid")
+    sceneId: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
+    chapterNumber: int = Field(ge=1, le=200)
+    title: str = Field(min_length=1, max_length=160)
+    body: str = Field(min_length=1, max_length=12000)
+    choices: List[AdminChoiceInput] = Field(default_factory=list, max_length=8)
+
+
+class AdminDraftScenesUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    baseRevision: int = Field(ge=1)
+    scenes: List[AdminSceneInput] = Field(default_factory=list, max_length=200)
+
+
+def _validate_manual_scenes(scenes: List[AdminSceneInput]) -> None:
+    scene_ids = [scene.sceneId for scene in scenes]
+    if len(scene_ids) != len(set(scene_ids)):
+        raise HTTPException(status_code=422, detail={"error": "duplicate_scene_id"})
+    for scene in scenes:
+        choice_ids = [choice.choiceId for choice in scene.choices]
+        if len(choice_ids) != len(set(choice_ids)):
+            raise HTTPException(status_code=422, detail={"error": "duplicate_choice_id", "sceneId": scene.sceneId})
+
+
 def _public_admin_draft(doc: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "draftId": doc["draftId"],
@@ -487,6 +524,7 @@ def _public_admin_draft(doc: Dict[str, Any]) -> Dict[str, Any]:
         "title": doc["title"],
         "synopsis": doc["synopsis"],
         "branchNotes": doc["branchNotes"],
+        "scenes": doc.get("scenes", []),
         "status": doc.get("status", "draft"),
         "revision": doc["revision"],
         "createdAt": doc["createdAt"],
@@ -513,6 +551,7 @@ async def create_admin_draft(request: Request, payload: AdminDraftInput):
         **payload.model_dump(),
         "revision": 1,
         "status": "draft",
+        "scenes": [],
         "createdAt": now,
         "updatedAt": now,
         "updatedBy": user["email"],
@@ -532,6 +571,28 @@ async def update_admin_draft(draft_id: str, request: Request, payload: AdminDraf
     updated = await admin_drafts.find_one_and_update(
         {"draftId": draft_id, "revision": payload.baseRevision},
         {"$set": {**changes, "updatedAt": now, "updatedBy": user["email"]}, "$inc": {"revision": 1}},
+        return_document=True,
+    )
+    if updated is None:
+        current = await admin_drafts.find_one({"draftId": draft_id}, {"_id": 0})
+        if current is None:
+            raise HTTPException(status_code=404, detail={"error": "draft_not_found"})
+        return JSONResponse(status_code=409, content={"error": "revision_conflict", "currentDraft": _public_admin_draft(current)})
+    return _public_admin_draft(updated)
+
+
+@api.put("/admin/drafts/{draft_id}/scenes")
+async def update_admin_draft_scenes(draft_id: str, request: Request, payload: AdminDraftScenesUpdate):
+    """Replace a draft's manual scene list; this does not publish content."""
+    user = await _current_user(request)
+    _require_admin(user)
+    if not re.fullmatch(r"draft_[0-9a-f]{32}", draft_id):
+        raise HTTPException(status_code=400, detail={"error": "invalid_draft_id"})
+    _validate_manual_scenes(payload.scenes)
+    now = _now()
+    updated = await admin_drafts.find_one_and_update(
+        {"draftId": draft_id, "revision": payload.baseRevision},
+        {"$set": {"scenes": [scene.model_dump() for scene in payload.scenes], "updatedAt": now, "updatedBy": user["email"]}, "$inc": {"revision": 1}},
         return_document=True,
     )
     if updated is None:
@@ -583,6 +644,18 @@ async def validate_admin_draft(draft_id: str, request: Request):
         issues.append({"code": "synopsis_too_short", "message": "Add a synopsis of at least 40 characters."})
     if len(draft.get("branchNotes", "").strip()) < 40:
         issues.append({"code": "branch_notes_too_short", "message": "Add at least 40 characters of branch notes."})
+    scenes = draft.get("scenes", [])
+    if not scenes:
+        issues.append({"code": "no_scenes", "message": "Add at least one manually written scene."})
+    else:
+        scene_ids = {scene.get("sceneId") for scene in scenes if isinstance(scene, dict)}
+        for scene in scenes:
+            if not isinstance(scene, dict):
+                continue
+            for choice in scene.get("choices", []):
+                target = choice.get("nextSceneId") if isinstance(choice, dict) else None
+                if target and target not in scene_ids:
+                    issues.append({"code": "unknown_scene_target", "message": f"Choice in '{scene.get('sceneId', 'a scene')}' points to missing scene '{target}'."})
     return {"draftId": draft_id, "valid": not issues, "issues": issues}
 
 

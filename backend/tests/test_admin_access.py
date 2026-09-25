@@ -49,3 +49,24 @@ def test_admin_draft_validation_is_bounded_and_rejects_unknown_fields(monkeypatc
     finally:
         server.client.close()
         sys.modules.pop("server", None)
+
+
+def test_manual_scenes_reject_duplicate_identifiers(monkeypatch):
+    monkeypatch.setenv("MONGO_URL", "mongodb://127.0.0.1:27017")
+    monkeypatch.setenv("DB_NAME", "phase11_manual_scenes_test")
+    import importlib
+    import sys
+    sys.modules.pop("server", None)
+    server = importlib.import_module("server")
+    try:
+        scene = server.AdminSceneInput(sceneId="arrival", chapterNumber=1, title="Arrival", body="The gate opens.", choices=[])
+        with pytest.raises(server.HTTPException) as duplicate_scenes:
+            server._validate_manual_scenes([scene, scene])
+        assert duplicate_scenes.value.status_code == 422
+        duplicate_choices = server.AdminSceneInput(sceneId="hall", chapterNumber=1, title="The hall", body="Candles burn.", choices=[server.AdminChoiceInput(choiceId="go", text="Go", nextSceneId="arrival"), server.AdminChoiceInput(choiceId="go", text="Stay", nextSceneId=None)])
+        with pytest.raises(server.HTTPException) as duplicate_choices_error:
+            server._validate_manual_scenes([duplicate_choices])
+        assert duplicate_choices_error.value.status_code == 422
+    finally:
+        server.client.close()
+        sys.modules.pop("server", None)
