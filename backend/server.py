@@ -654,6 +654,7 @@ def _public_admin_draft(doc: Dict[str, Any]) -> Dict[str, Any]:
         "branchNotes": doc["branchNotes"],
         "scenes": doc.get("scenes", []),
         "status": doc.get("status", "draft"),
+        "reviewApproval": doc.get("reviewApproval"),
         "revision": doc["revision"],
         "createdAt": doc["createdAt"],
         "updatedAt": doc["updatedAt"],
@@ -791,7 +792,7 @@ async def update_admin_draft(draft_id: str, request: Request, payload: AdminDraf
     changes = payload.model_dump(exclude={"baseRevision"})
     updated = await admin_drafts.find_one_and_update(
         {"draftId": draft_id, "revision": payload.baseRevision},
-        {"$set": {**changes, "updatedAt": now, "updatedBy": user["email"]}, "$inc": {"revision": 1}},
+        {"$set": {**changes, "status": "draft", "updatedAt": now, "updatedBy": user["email"]}, "$unset": {"reviewApproval": ""}, "$inc": {"revision": 1}},
         return_document=True,
     )
     if updated is None:
@@ -813,7 +814,7 @@ async def update_admin_draft_scenes(draft_id: str, request: Request, payload: Ad
     now = _now()
     updated = await admin_drafts.find_one_and_update(
         {"draftId": draft_id, "revision": payload.baseRevision},
-        {"$set": {"scenes": [scene.model_dump() for scene in payload.scenes], "updatedAt": now, "updatedBy": user["email"]}, "$inc": {"revision": 1}},
+        {"$set": {"scenes": [scene.model_dump() for scene in payload.scenes], "status": "draft", "updatedAt": now, "updatedBy": user["email"]}, "$unset": {"reviewApproval": ""}, "$inc": {"revision": 1}},
         return_document=True,
     )
     if updated is None:
@@ -833,7 +834,7 @@ async def request_admin_draft_review(draft_id: str, request: Request):
         raise HTTPException(status_code=400, detail={"error": "invalid_draft_id"})
     now = _now()
     updated = await admin_drafts.find_one_and_update(
-        {"draftId": draft_id, "status": {"$ne": "ready_for_review"}},
+        {"draftId": draft_id, "status": "draft"},
         {"$set": {"status": "ready_for_review", "updatedAt": now, "updatedBy": user["email"]}, "$inc": {"revision": 1}},
         return_document=True,
     )
@@ -843,6 +844,32 @@ async def request_admin_draft_review(draft_id: str, request: Request):
             raise HTTPException(status_code=404, detail={"error": "draft_not_found"})
         return _public_admin_draft(current)
     return _public_admin_draft(updated)
+
+
+@api.post("/admin/drafts/{draft_id}/approve-release")
+async def approve_admin_draft_release_candidate(draft_id: str, request: Request):
+    """Record a human approval checkpoint; it cannot publish game content."""
+    user = await _current_user(request)
+    _require_admin(user)
+    if not re.fullmatch(r"draft_[0-9a-f]{32}", draft_id):
+        raise HTTPException(status_code=400, detail={"error": "invalid_draft_id"})
+    draft = await admin_drafts.find_one({"draftId": draft_id}, {"_id": 0})
+    if draft is None:
+        raise HTTPException(status_code=404, detail={"error": "draft_not_found"})
+    if draft.get("status") != "ready_for_review":
+        raise HTTPException(status_code=409, detail={"error": "draft_not_ready_for_approval"})
+    issues = _admin_draft_validation_issues(draft)
+    if issues:
+        raise HTTPException(status_code=422, detail={"error": "draft_not_ready_for_approval", "issues": issues})
+    now = _now()
+    approved = await admin_drafts.find_one_and_update(
+        {"draftId": draft_id, "revision": draft["revision"], "status": "ready_for_review"},
+        {"$set": {"status": "approved_for_release", "reviewApproval": {"approvedAt": now, "approvedBy": user["email"], "approvedRevision": draft["revision"]}, "updatedAt": now, "updatedBy": user["email"]}, "$inc": {"revision": 1}},
+        return_document=True,
+    )
+    if approved is None:
+        raise HTTPException(status_code=409, detail={"error": "revision_conflict"})
+    return _public_admin_draft(approved)
 
 
 @api.get("/admin/drafts/{draft_id}/validation")
@@ -869,7 +896,7 @@ async def export_admin_draft_for_review(draft_id: str, request: Request):
     draft = await admin_drafts.find_one({"draftId": draft_id}, {"_id": 0})
     if draft is None:
         raise HTTPException(status_code=404, detail={"error": "draft_not_found"})
-    if draft.get("status") != "ready_for_review":
+    if draft.get("status") not in {"ready_for_review", "approved_for_release"}:
         raise HTTPException(status_code=409, detail={"error": "draft_not_ready_for_review"})
     issues = _admin_draft_validation_issues(draft)
     if issues:

@@ -143,3 +143,20 @@ def test_future_book_drafts_are_valid_review_candidates(monkeypatch):
     finally:
         server.client.close()
         sys.modules.pop("server", None)
+
+
+def test_public_draft_includes_optional_release_approval(monkeypatch):
+    monkeypatch.setenv("MONGO_URL", "mongodb://127.0.0.1:27017")
+    monkeypatch.setenv("DB_NAME", "phase15_approval_test")
+    import importlib
+    import sys
+    sys.modules.pop("server", None)
+    server = importlib.import_module("server")
+    try:
+        draft = {"draftId": "draft_" + "b" * 32, "bookId": "book3", "title": "Vamp", "synopsis": "A suitable synopsis.", "branchNotes": "Suitable notes.", "scenes": [], "status": "approved_for_release", "revision": 4, "createdAt": "now", "updatedAt": "now", "updatedBy": "admin@example.com", "reviewApproval": {"approvedAt": "now", "approvedBy": "admin@example.com", "approvedRevision": 3}}
+        public = server._public_admin_draft(draft)
+        assert public["status"] == "approved_for_release"
+        assert public["reviewApproval"]["approvedRevision"] == 3
+    finally:
+        server.client.close()
+        sys.modules.pop("server", None)

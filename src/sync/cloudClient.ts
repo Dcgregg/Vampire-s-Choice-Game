@@ -72,7 +72,8 @@ export interface AdminDraft {
   synopsis: string;
   branchNotes: string;
   scenes: AdminScene[];
-  status: 'draft' | 'ready_for_review';
+  status: 'draft' | 'ready_for_review' | 'approved_for_release';
+  reviewApproval?: { approvedAt: string; approvedBy: string; approvedRevision: number } | null;
   revision: number;
   createdAt: string;
   updatedAt: string;
@@ -169,6 +170,12 @@ export async function updateAdminDraftScenes(draftId: string, scenes: AdminScene
 export async function requestAdminDraftReview(draftId: string): Promise<AdminDraft> {
   const r = await fetch(`${API_BASE}/admin/drafts/${draftId}/request-review`, { method: 'POST', credentials: 'include' });
   if (!r.ok) throw new Error(`requestAdminDraftReview failed: ${r.status}`);
+  return (await r.json()) as AdminDraft;
+}
+
+export async function approveAdminDraftRelease(draftId: string): Promise<AdminDraft> {
+  const r = await fetch(`${API_BASE}/admin/drafts/${draftId}/approve-release`, { method: 'POST', credentials: 'include' });
+  if (!r.ok) throw new Error(`approveAdminDraftRelease failed: ${r.status}`);
   return (await r.json()) as AdminDraft;
 }
 
