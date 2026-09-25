@@ -49,6 +49,8 @@ GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET")
 GOOGLE_REDIRECT_URI = os.environ.get("GOOGLE_REDIRECT_URI")
 GOOGLE_OAUTH_SUCCESS_URL = os.environ.get("GOOGLE_OAUTH_SUCCESS_URL", "/")
 ADMIN_EMAILS = configured_admin_emails(os.environ.get("ADMIN_EMAILS"))
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
+OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "openrouter/free")
 SESSION_TTL_DAYS = 7
 SESSION_COOKIE_NAME = "__Host-vc_session"
 LEGACY_SESSION_COOKIE_NAME = "session_token"
@@ -507,6 +509,19 @@ class AdminDraftScenesUpdate(BaseModel):
     scenes: List[AdminSceneInput] = Field(default_factory=list, max_length=200)
 
 
+class AdminAiDraftRequest(BaseModel):
+    """Bounded creative brief for admin-only OpenRouter draft generation."""
+
+    model_config = ConfigDict(extra="forbid")
+    bookId: str = Field(min_length=1, max_length=80)
+    premise: str = Field(min_length=20, max_length=2000)
+    desiredTitle: str = Field(default="", max_length=160)
+
+
+class AdminGeneratedDraft(AdminDraftInput):
+    scenes: List[AdminSceneInput] = Field(min_length=3, max_length=8)
+
+
 def _validate_manual_scenes(scenes: List[AdminSceneInput]) -> None:
     scene_ids = [scene.sceneId for scene in scenes]
     if len(scene_ids) != len(set(scene_ids)):
@@ -515,6 +530,37 @@ def _validate_manual_scenes(scenes: List[AdminSceneInput]) -> None:
         choice_ids = [choice.choiceId for choice in scene.choices]
         if len(choice_ids) != len(set(choice_ids)):
             raise HTTPException(status_code=422, detail={"error": "duplicate_choice_id", "sceneId": scene.sceneId})
+
+
+def _openrouter_json(prompt: str) -> Dict[str, Any]:
+    if not OPENROUTER_API_KEY:
+        raise HTTPException(status_code=503, detail={"error": "openrouter_not_configured"})
+    request_body = _json.dumps({
+        "model": OPENROUTER_MODEL,
+        "messages": [
+            {"role": "system", "content": "You are a gothic fantasy interactive-fiction drafting assistant. Generate original writing only. Return only valid JSON; no markdown or commentary."},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": 0.85,
+        "max_tokens": 5000,
+    }).encode()
+    upstream = urllib.request.Request(
+        "https://openrouter.ai/api/v1/chat/completions",
+        data=request_body,
+        method="POST",
+        headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(upstream, timeout=45) as response:
+            payload = _json.loads(response.read().decode())
+        content = payload["choices"][0]["message"]["content"].strip()
+        if content.startswith("```"):
+            content = content.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+        return _json.loads(content)
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=502, detail={"error": "openrouter_generation_failed"})
 
 
 def _sample_story_scenes() -> List[Dict[str, Any]]:
@@ -551,6 +597,13 @@ async def list_admin_drafts(request: Request):
     _require_admin(user)
     docs = await admin_drafts.find({}, {"_id": 0}).sort("updatedAt", -1).to_list(length=100)
     return {"drafts": [_public_admin_draft(doc) for doc in docs]}
+
+
+@api.get("/admin/ai/status")
+async def admin_ai_status(request: Request):
+    user = await _current_user(request)
+    _require_admin(user)
+    return {"configured": bool(OPENROUTER_API_KEY), "model": OPENROUTER_MODEL if OPENROUTER_API_KEY else None}
 
 
 @api.post("/admin/drafts", status_code=201)
@@ -591,6 +644,29 @@ async def create_sample_admin_draft(request: Request):
         "updatedAt": now,
         "updatedBy": user["email"],
     }
+    await admin_drafts.insert_one(doc)
+    return _public_admin_draft(doc)
+
+
+@api.post("/admin/drafts/generate", status_code=201)
+async def generate_admin_draft(request: Request, payload: AdminAiDraftRequest):
+    """Use OpenRouter to create a private, editable draft for an administrator."""
+    user = await _current_user(request)
+    _require_admin(user)
+    schema = '{"title":"string","synopsis":"string","branchNotes":"string","scenes":[{"sceneId":"id","chapterNumber":1,"title":"string","body":"string","choices":[{"choiceId":"id","text":"string","nextSceneId":"id or null","effectsNotes":"string"}]}]}'
+    brief = f"Create a self-contained 3 to 6 scene interactive gothic fantasy romance opening for bookId '{payload.bookId}'. Premise: {payload.premise}\nDesired title: {payload.desiredTitle or 'Choose an evocative original title.'}\nUse only scene and choice IDs containing letters, numbers, underscores or hyphens. Every non-null nextSceneId must name a scene in the response. Include choices on most scenes and a terminal final scene. Output exactly this JSON shape: {schema}"
+    try:
+        generated = AdminGeneratedDraft.model_validate(_openrouter_json(brief))
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=502, detail={"error": "openrouter_invalid_draft"})
+    _validate_manual_scenes(generated.scenes)
+    scene_ids = {scene.sceneId for scene in generated.scenes}
+    if any(choice.nextSceneId and choice.nextSceneId not in scene_ids for scene in generated.scenes for choice in scene.choices):
+        raise HTTPException(status_code=502, detail={"error": "openrouter_invalid_links"})
+    now = _now()
+    doc = {"draftId": f"draft_{uuid.uuid4().hex}", **generated.model_dump(), "revision": 1, "status": "draft", "createdAt": now, "updatedAt": now, "updatedBy": user["email"]}
     await admin_drafts.insert_one(doc)
     return _public_admin_draft(doc)
 

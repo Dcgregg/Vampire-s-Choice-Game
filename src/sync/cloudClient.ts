@@ -96,6 +96,8 @@ export interface AdminScene {
 
 export type AdminDraftInput = Pick<AdminDraft, 'bookId' | 'title' | 'synopsis' | 'branchNotes'>;
 export interface AdminDraftValidation { draftId: string; valid: boolean; issues: Array<{ code: string; message: string }>; }
+export interface AdminAiStatus { configured: boolean; model: string | null; }
+export interface AdminAiDraftRequest { bookId: string; premise: string; desiredTitle: string; }
 
 export async function getMe(): Promise<PublicUser | null> {
   const r = await fetch(`${API_BASE}/auth/me`, { credentials: 'include' });
@@ -117,6 +119,13 @@ export async function getAdminDrafts(): Promise<AdminDraft[] | null> {
   return ((await r.json()) as { drafts: AdminDraft[] }).drafts;
 }
 
+export async function getAdminAiStatus(): Promise<AdminAiStatus | null> {
+  const r = await fetch(`${API_BASE}/admin/ai/status`, { credentials: 'include' });
+  if (r.status === 401 || r.status === 403) return null;
+  if (!r.ok) throw new Error(`getAdminAiStatus failed: ${r.status}`);
+  return (await r.json()) as AdminAiStatus;
+}
+
 export async function createAdminDraft(input: AdminDraftInput): Promise<AdminDraft> {
   const r = await fetch(`${API_BASE}/admin/drafts`, {
     method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),
@@ -128,6 +137,13 @@ export async function createAdminDraft(input: AdminDraftInput): Promise<AdminDra
 export async function createSampleAdminDraft(): Promise<AdminDraft> {
   const r = await fetch(`${API_BASE}/admin/drafts/sample`, { method: 'POST', credentials: 'include' });
   if (!r.ok) throw new Error(`createSampleAdminDraft failed: ${r.status}`);
+  return (await r.json()) as AdminDraft;
+}
+
+export async function generateAdminDraft(input: AdminAiDraftRequest): Promise<AdminDraft> {
+  const r = await fetch(`${API_BASE}/admin/drafts/generate`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
+  if (r.status === 503) throw new Error('openrouter_not_configured');
+  if (!r.ok) throw new Error(`generateAdminDraft failed: ${r.status}`);
   return (await r.json()) as AdminDraft;
 }
 
