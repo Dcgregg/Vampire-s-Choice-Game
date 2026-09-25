@@ -201,3 +201,25 @@ def test_approved_release_package_has_stable_checksum(monkeypatch):
     finally:
         server.client.close()
         sys.modules.pop("server", None)
+
+
+def test_book_json_import_converts_engine_scenes_to_private_draft(monkeypatch):
+    monkeypatch.setenv("MONGO_URL", "mongodb://127.0.0.1:27017")
+    monkeypatch.setenv("DB_NAME", "phase17_json_import_test")
+    import importlib
+    import sys
+    sys.modules.pop("server", None)
+    server = importlib.import_module("server")
+    try:
+        content = {"book": {"id": "book3", "title": "Imported", "synopsis": "A sufficiently complete imported synopsis for the draft workflow.", "subtitle": "Enough branch notes for this private editorial import."}, "scenes": [
+            {"id": "start", "chapterNumber": 1, "sceneTitle": "Start", "paragraphs": ["The story begins."], "choices": [{"id": "go", "text": "Continue", "nextSceneId": "middle"}]},
+            {"id": "middle", "chapterNumber": 1, "sceneTitle": "Middle", "paragraphs": ["The story deepens."], "choices": [{"id": "end", "text": "End", "nextSceneId": "ending"}]},
+            {"id": "ending", "chapterNumber": 1, "sceneTitle": "End", "paragraphs": ["The route concludes."], "choices": []},
+        ]}
+        imported = server._import_book_json(content)
+        assert imported["bookId"] == "book3"
+        assert imported["scenes"][0]["body"] == "The story begins."
+        assert imported["scenes"][2]["choices"] == []
+    finally:
+        server.client.close()
+        sys.modules.pop("server", None)

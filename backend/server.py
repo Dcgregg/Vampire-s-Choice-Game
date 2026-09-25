@@ -518,6 +518,12 @@ class AdminAiDraftRequest(BaseModel):
     desiredTitle: str = Field(default="", max_length=160)
 
 
+class AdminBookJsonImport(BaseModel):
+    """An uploaded authoring file. It is always converted to a private draft."""
+    model_config = ConfigDict(extra="forbid")
+    content: Dict[str, Any]
+
+
 class AdminGeneratedDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
     title: str = Field(min_length=1, max_length=160)
@@ -534,6 +540,54 @@ def _validate_manual_scenes(scenes: List[AdminSceneInput]) -> None:
         choice_ids = [choice.choiceId for choice in scene.choices]
         if len(choice_ids) != len(set(choice_ids)):
             raise HTTPException(status_code=422, detail={"error": "duplicate_choice_id", "sceneId": scene.sceneId})
+
+
+def _import_book_json(content: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert supported book JSON into the private draft format; never publish."""
+    source = content.get("draft", content) if isinstance(content, dict) else {}
+    if not isinstance(source, dict):
+        raise HTTPException(status_code=422, detail={"error": "invalid_book_json"})
+    raw_scenes = source.get("scenes", [])
+    if not isinstance(raw_scenes, list):
+        raise HTTPException(status_code=422, detail={"error": "invalid_book_scenes"})
+    book = source.get("book") if isinstance(source.get("book"), dict) else {}
+    book_id = source.get("bookId", book.get("id", ""))
+    title = source.get("title", book.get("title", ""))
+    synopsis = source.get("synopsis", book.get("synopsis", ""))
+    branch_notes = source.get("branchNotes", book.get("subtitle", "Imported from Book JSON for editorial review."))
+    converted = []
+    for index, scene in enumerate(raw_scenes):
+        if not isinstance(scene, dict):
+            continue
+        if "sceneId" in scene:
+            converted.append(scene)
+            continue
+        paragraphs = scene.get("paragraphs", [])
+        body_parts = [part for part in paragraphs if isinstance(part, str)] if isinstance(paragraphs, list) else []
+        for dialogue in scene.get("dialogues", []) if isinstance(scene.get("dialogues", []), list) else []:
+            if isinstance(dialogue, dict) and isinstance(dialogue.get("text"), str):
+                speaker = dialogue.get("speaker", "")
+                body_parts.append(f"{speaker}: {dialogue['text']}" if speaker else dialogue["text"])
+        choices = []
+        for choice_index, choice in enumerate(scene.get("choices", []) if isinstance(scene.get("choices", []), list) else []):
+            if not isinstance(choice, dict):
+                continue
+            notes = choice.get("consequencesSummary", "")
+            if choice.get("effects"):
+                notes = f"{notes}\nEffects: {_json.dumps(choice['effects'], separators=(',', ':'))}".strip()
+            choices.append({"choiceId": choice.get("id", f"choice-{choice_index + 1}"), "text": choice.get("text", ""), "nextSceneId": None if choice.get("endsBook") else choice.get("nextSceneId"), "effectsNotes": notes[:1000]})
+        converted.append({"sceneId": scene.get("id", f"scene-{index + 1}"), "chapterNumber": scene.get("chapterNumber", 1), "title": scene.get("sceneTitle", scene.get("title", "")), "body": "\n\n".join(body_parts), "choices": choices})
+    try:
+        details = AdminDraftInput(bookId=book_id, title=title, synopsis=synopsis, branchNotes=branch_notes)
+        scenes = [AdminSceneInput.model_validate(scene) for scene in converted]
+    except Exception:
+        raise HTTPException(status_code=422, detail={"error": "invalid_book_json"})
+    _validate_manual_scenes(scenes)
+    draft = {**details.model_dump(), "scenes": [scene.model_dump() for scene in scenes]}
+    issues = _admin_draft_validation_issues(draft)
+    if issues:
+        raise HTTPException(status_code=422, detail={"error": "book_json_failed_validation", "issues": issues})
+    return draft
 
 
 def _openrouter_json(prompt: str) -> Dict[str, Any]:
@@ -813,6 +867,18 @@ async def create_sample_admin_draft(request: Request):
         "updatedAt": now,
         "updatedBy": user["email"],
     }
+    await admin_drafts.insert_one(doc)
+    return _public_admin_draft(doc)
+
+
+@api.post("/admin/drafts/import-book-json", status_code=201)
+async def import_admin_book_json(request: Request, payload: AdminBookJsonImport):
+    """Validate a Book JSON file, then create a private editable draft only."""
+    user = await _current_user(request)
+    _require_admin(user)
+    imported = _import_book_json(payload.content)
+    now = _now()
+    doc = {"draftId": f"draft_{uuid.uuid4().hex}", **imported, "revision": 1, "status": "draft", "importedAt": now, "importedBy": user["email"], "createdAt": now, "updatedAt": now, "updatedBy": user["email"]}
     await admin_drafts.insert_one(doc)
     return _public_admin_draft(doc)
 

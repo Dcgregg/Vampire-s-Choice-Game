@@ -1,12 +1,14 @@
 # Phases 17–19 — Release preparation
 
-This bundled milestone prepares approved drafts for a future, separately
-authorised publication phase. It cannot publish story content.
+This bundled milestone begins with a Book JSON import, which is always
+validated and converted into a private editable draft. It cannot publish story
+content or write to player content.
 
 ## Phase 17 — Story graph integrity
 
-Readiness checks now prevent unreachable scenes, routes that can never reach an
-ending, and stories with no terminal scene.
+Book JSON is imported into the same private draft model used by manual and AI
+authoring. Readiness checks prevent unreachable scenes, routes that can never
+reach an ending, and stories with no terminal scene.
 
 ## Phase 18 — Release readiness gate
 

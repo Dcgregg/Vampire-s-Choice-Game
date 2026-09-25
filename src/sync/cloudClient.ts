@@ -145,6 +145,12 @@ export async function createSampleAdminDraft(): Promise<AdminDraft> {
   return (await r.json()) as AdminDraft;
 }
 
+export async function importAdminBookJson(content: Record<string, unknown>): Promise<AdminDraft> {
+  const r = await fetch(`${API_BASE}/admin/drafts/import-book-json`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content }) });
+  if (!r.ok) throw new Error(`importAdminBookJson failed: ${r.status}`);
+  return (await r.json()) as AdminDraft;
+}
+
 export async function generateAdminDraft(input: AdminAiDraftRequest): Promise<AdminDraft> {
   const r = await fetch(`${API_BASE}/admin/drafts/generate`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
   if (r.status === 503) throw new Error('openrouter_not_configured');
