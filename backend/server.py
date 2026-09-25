@@ -518,7 +518,11 @@ class AdminAiDraftRequest(BaseModel):
     desiredTitle: str = Field(default="", max_length=160)
 
 
-class AdminGeneratedDraft(AdminDraftInput):
+class AdminGeneratedDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    title: str = Field(min_length=1, max_length=160)
+    synopsis: str = Field(max_length=8000)
+    branchNotes: str = Field(max_length=12000)
     scenes: List[AdminSceneInput] = Field(min_length=3, max_length=8)
 
 
@@ -673,7 +677,7 @@ async def generate_admin_draft(request: Request, payload: AdminAiDraftRequest):
     if any(choice.nextSceneId and choice.nextSceneId not in scene_ids for scene in generated.scenes for choice in scene.choices):
         raise HTTPException(status_code=502, detail={"error": "openrouter_invalid_links"})
     now = _now()
-    doc = {"draftId": f"draft_{uuid.uuid4().hex}", **generated.model_dump(), "revision": 1, "status": "draft", "createdAt": now, "updatedAt": now, "updatedBy": user["email"]}
+    doc = {"draftId": f"draft_{uuid.uuid4().hex}", "bookId": payload.bookId, **generated.model_dump(), "revision": 1, "status": "draft", "createdAt": now, "updatedAt": now, "updatedBy": user["email"]}
     await admin_drafts.insert_one(doc)
     return _public_admin_draft(doc)
 
