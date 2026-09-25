@@ -90,11 +90,19 @@ export interface AdminChoice {
   effectsNotes: string;
 }
 
+export interface AdminDialogue {
+  speakerId: string;
+  displayName: string;
+  text: string;
+  mood: string;
+}
+
 export interface AdminScene {
   sceneId: string;
   chapterNumber: number;
   title: string;
   body: string;
+  dialogue?: AdminDialogue[];
   choices: AdminChoice[];
 }
 

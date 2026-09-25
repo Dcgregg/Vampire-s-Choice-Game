@@ -64,7 +64,7 @@ SUPPORTED_SAVE_SCHEMA_VERSIONS = {1, 2, 3}
 MAX_BODY_BYTES = 512 * 1024  # constrain request size
 PLAYER_ID_RE = re.compile(r"^vc_[A-Za-z0-9_-]{8,64}$")
 STORY_TOKEN_RE = re.compile(r"{{\s*([A-Za-z][A-Za-z0-9_.-]*)\s*}}")
-ALLOWED_STORY_TOKENS = {"player.name", "player.subject", "player.object", "player.possessive"}
+ALLOWED_STORY_TOKENS = {"player.name", "player.subject", "player.object", "player.possessive", "player.species", "speaker.name"}
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
@@ -494,6 +494,16 @@ class AdminChoiceInput(BaseModel):
     effectsNotes: str = Field(default="", max_length=1000)
 
 
+class AdminDialogueInput(BaseModel):
+    """A presentational dialogue beat in a private authoring draft."""
+
+    model_config = ConfigDict(extra="forbid")
+    speakerId: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
+    displayName: str = Field(min_length=1, max_length=120)
+    text: str = Field(min_length=1, max_length=4000)
+    mood: str = Field(default="neutral", max_length=40, pattern=r"^[A-Za-z0-9_-]+$")
+
+
 class AdminSceneInput(BaseModel):
     """A bounded manual scene format, separate from published story content."""
 
@@ -502,6 +512,7 @@ class AdminSceneInput(BaseModel):
     chapterNumber: int = Field(ge=1, le=200)
     title: str = Field(min_length=1, max_length=160)
     body: str = Field(min_length=1, max_length=12000)
+    dialogue: List[AdminDialogueInput] = Field(default_factory=list, max_length=20)
     choices: List[AdminChoiceInput] = Field(default_factory=list, max_length=8)
 
 
@@ -550,6 +561,11 @@ def _validate_manual_scenes(scenes: List[AdminSceneInput]) -> None:
             unknown = sorted({token for token in STORY_TOKEN_RE.findall(choice.text) if token not in ALLOWED_STORY_TOKENS})
             if unknown:
                 raise HTTPException(status_code=422, detail={"error": "unknown_story_token", "sceneId": scene.sceneId, "field": "choice", "tokens": unknown})
+        for dialogue in scene.dialogue:
+            for value, field in ((dialogue.displayName, "dialogueDisplayName"), (dialogue.text, "dialogueText")):
+                unknown = sorted({token for token in STORY_TOKEN_RE.findall(value) if token not in ALLOWED_STORY_TOKENS})
+                if unknown:
+                    raise HTTPException(status_code=422, detail={"error": "unknown_story_token", "sceneId": scene.sceneId, "field": field, "tokens": unknown})
 
 
 def _import_book_json(content: Dict[str, Any]) -> Dict[str, Any]:
@@ -586,7 +602,8 @@ def _import_book_json(content: Dict[str, Any]) -> Dict[str, Any]:
             if choice.get("effects"):
                 notes = f"{notes}\nEffects: {_json.dumps(choice['effects'], separators=(',', ':'))}".strip()
             choices.append({"choiceId": choice.get("id", f"choice-{choice_index + 1}"), "text": choice.get("text", ""), "nextSceneId": None if choice.get("endsBook") else choice.get("nextSceneId"), "effectsNotes": notes[:1000]})
-        converted.append({"sceneId": scene.get("id", f"scene-{index + 1}"), "chapterNumber": scene.get("chapterNumber", 1), "title": scene.get("sceneTitle", scene.get("title", "")), "body": "\n\n".join(body_parts), "choices": choices})
+        dialogue = scene.get("dialogue", []) if isinstance(scene.get("dialogue"), list) else []
+        converted.append({"sceneId": scene.get("id", f"scene-{index + 1}"), "chapterNumber": scene.get("chapterNumber", 1), "title": scene.get("sceneTitle", scene.get("title", "")), "body": "\n\n".join(body_parts), "dialogue": dialogue, "choices": choices})
     try:
         details = AdminDraftInput(bookId=book_id, title=title, synopsis=synopsis, branchNotes=branch_notes)
         scenes = [AdminSceneInput.model_validate(scene) for scene in converted]

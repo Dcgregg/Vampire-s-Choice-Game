@@ -80,7 +80,7 @@ def test_story_tokens_are_allow_listed_in_manual_drafts(monkeypatch):
     sys.modules.pop("server", None)
     server = importlib.import_module("server")
     try:
-        allowed = server.AdminSceneInput(sceneId="arrival", chapterNumber=1, title="Welcome, {{player.name}}", body="{{player.subject}} follows the candlelight.", choices=[server.AdminChoiceInput(choiceId="go", text="Trust {{player.object}} instincts", nextSceneId=None)])
+        allowed = server.AdminSceneInput(sceneId="arrival", chapterNumber=1, title="Welcome, {{player.name}}", body="{{player.subject}} follows the candlelight as a {{player.species}}.", dialogue=[server.AdminDialogueInput(speakerId="teacher", displayName="Professor Vale", text="{{speaker.name}} watches {{player.object}} closely.")], choices=[server.AdminChoiceInput(choiceId="go", text="Trust {{player.object}} instincts", nextSceneId=None)])
         server._validate_manual_scenes([allowed])
         unknown = server.AdminSceneInput(sceneId="unknown", chapterNumber=1, title="Unknown", body="{{player.secret}}", choices=[])
         with pytest.raises(server.HTTPException) as error:
