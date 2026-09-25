@@ -122,3 +122,24 @@ def test_review_export_is_explicitly_non_player_facing(monkeypatch):
     finally:
         server.client.close()
         sys.modules.pop("server", None)
+
+
+def test_future_book_drafts_are_valid_review_candidates(monkeypatch):
+    monkeypatch.setenv("MONGO_URL", "mongodb://127.0.0.1:27017")
+    monkeypatch.setenv("DB_NAME", "phase14_future_book_test")
+    import importlib
+    import sys
+    sys.modules.pop("server", None)
+    server = importlib.import_module("server")
+    try:
+        draft = {
+            "bookId": "book3", "title": "Vamp", "synopsis": "A future-book draft with a suitably complete synopsis for review.",
+            "branchNotes": "A future-book draft with sufficiently detailed branching notes for review.", "scenes": [],
+        }
+        issues = server._admin_draft_validation_issues(draft)
+        assert not any(issue["code"] in {"unknown_book", "invalid_book_id"} for issue in issues)
+        draft["bookId"] = "future-book"
+        assert any(issue["code"] == "invalid_book_id" for issue in server._admin_draft_validation_issues(draft))
+    finally:
+        server.client.close()
+        sys.modules.pop("server", None)

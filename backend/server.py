@@ -663,10 +663,12 @@ def _public_admin_draft(doc: Dict[str, Any]) -> Dict[str, Any]:
 
 def _admin_draft_validation_issues(draft: Dict[str, Any]) -> List[Dict[str, str]]:
     """Editorial checks shared by review and export; never publish content."""
-    known_books = {item.get("id") for item in load_registry().get("series", {}).get("books", []) if isinstance(item, dict)}
     issues: List[Dict[str, str]] = []
-    if draft.get("bookId") not in known_books:
-        issues.append({"code": "unknown_book", "message": "Choose a book from the series catalogue."})
+    # Drafts may be for a future instalment (for example `book3`) that is not
+    # yet in the player catalogue. The catalogue is reference information, not
+    # a publication gate. Keep only a stable ID-format check here.
+    if not re.fullmatch(r"book[1-9][0-9]*", str(draft.get("bookId", ""))):
+        issues.append({"code": "invalid_book_id", "message": "Use a future-safe book ID such as book1, book2 or book3."})
     if len(draft.get("title", "").strip()) < 3:
         issues.append({"code": "title_too_short", "message": "Use a title of at least 3 characters."})
     if len(draft.get("synopsis", "").strip()) < 40:
