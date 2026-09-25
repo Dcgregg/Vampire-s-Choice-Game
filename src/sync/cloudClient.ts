@@ -100,7 +100,7 @@ export interface AdminScene {
 
 export type AdminDraftInput = Pick<AdminDraft, 'bookId' | 'title' | 'synopsis' | 'branchNotes'>;
 export interface AdminDraftValidation { draftId: string; valid: boolean; issues: Array<{ code: string; message: string }>; }
-export interface AdminDraftReviewExport { format: 'vampires-choice-review-export/v1'; exportedAt: string; source: { draftId: string; revision: number; status: string }; draft: AdminDraft; publication: { playerFacing: false; published: false; note: string }; }
+export interface AdminDraftReviewExport { format: string; draft: AdminDraft; [key: string]: unknown; }
 export interface AdminAiStatus { configured: boolean; model: string | null; }
 export interface AdminAiDraftRequest { bookId: string; premise: string; desiredTitle: string; }
 

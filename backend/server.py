@@ -693,11 +693,64 @@ def _admin_draft_validation_issues(draft: Dict[str, Any]) -> List[Dict[str, str]
                 target = choice.get("nextSceneId") if isinstance(choice, dict) else None
                 if target and target not in scene_ids:
                     issues.append({"code": "unknown_scene_target", "message": f"Choice in '{scene.get('sceneId', 'a scene')}' points to missing scene '{target}'."})
+        graph = _draft_graph_report(draft)
+        if graph["unreachableSceneIds"]:
+            issues.append({"code": "unreachable_scenes", "message": f"Connect or remove unreachable scenes: {', '.join(graph['unreachableSceneIds'])}."})
+        if not graph["terminalSceneIds"]:
+            issues.append({"code": "no_terminal_scene", "message": "Add at least one terminal scene so a route can conclude."})
+        elif graph["nonTerminatingSceneIds"]:
+            issues.append({"code": "non_terminating_route", "message": f"These reachable scenes cannot reach an ending: {', '.join(graph['nonTerminatingSceneIds'])}."})
     return issues
+
+
+def _draft_graph_report(draft: Dict[str, Any]) -> Dict[str, Any]:
+    """Analyse authoring routes without mutating a draft or player content."""
+    scenes = [scene for scene in draft.get("scenes", []) if isinstance(scene, dict) and scene.get("sceneId")]
+    scene_ids = [scene["sceneId"] for scene in scenes]
+    if not scenes:
+        return {"startSceneId": None, "sceneCount": 0, "reachableSceneIds": [], "unreachableSceneIds": [], "terminalSceneIds": [], "nonTerminatingSceneIds": []}
+    known = set(scene_ids)
+    edges = {scene_id: set() for scene_id in scene_ids}
+    reverse = {scene_id: set() for scene_id in scene_ids}
+    terminal = []
+    for scene in scenes:
+        scene_id = scene["sceneId"]
+        targets = {choice.get("nextSceneId") for choice in scene.get("choices", []) if isinstance(choice, dict) and choice.get("nextSceneId") in known}
+        edges[scene_id] = targets
+        if not targets:
+            terminal.append(scene_id)
+        for target in targets:
+            reverse[target].add(scene_id)
+    start = scene_ids[0]
+    reachable, pending = set(), [start]
+    while pending:
+        scene_id = pending.pop()
+        if scene_id in reachable:
+            continue
+        reachable.add(scene_id)
+        pending.extend(edges[scene_id] - reachable)
+    can_finish, pending = set(), list(terminal)
+    while pending:
+        scene_id = pending.pop()
+        if scene_id in can_finish:
+            continue
+        can_finish.add(scene_id)
+        pending.extend(reverse[scene_id] - can_finish)
+    return {"startSceneId": start, "sceneCount": len(scene_ids), "reachableSceneIds": [scene_id for scene_id in scene_ids if scene_id in reachable], "unreachableSceneIds": [scene_id for scene_id in scene_ids if scene_id not in reachable], "terminalSceneIds": terminal, "nonTerminatingSceneIds": [scene_id for scene_id in scene_ids if scene_id in reachable and scene_id not in can_finish]}
+
+
+def _release_package(draft: Dict[str, Any]) -> Dict[str, Any]:
+    """A checksum-protected hand-off package; it has no live publish effect."""
+    draft_data = _public_admin_draft(draft)
+    source = {"draftId": draft["draftId"], "approvedRevision": draft.get("reviewApproval", {}).get("approvedRevision"), "currentRevision": draft["revision"]}
+    canonical = _json.dumps({"source": source, "draft": draft_data}, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    return {"format": "vampires-choice-release-package/v1", "createdAt": _now(), "source": source, "manifest": {"sha256": hashlib.sha256(canonical).hexdigest(), "sceneCount": len(draft_data["scenes"]), "playerFacing": False, "published": False}, "draft": draft_data, "note": "This package is a review hand-off only. It cannot update live player content."}
 
 
 def _review_export(draft: Dict[str, Any]) -> Dict[str, Any]:
     """A portable review package, intentionally separate from playable content."""
+    if draft.get("status") == "approved_for_release":
+        return _release_package(draft)
     return {
         "format": "vampires-choice-review-export/v1",
         "exportedAt": _now(),

@@ -161,3 +161,43 @@ def test_public_draft_includes_optional_release_approval(monkeypatch):
     finally:
         server.client.close()
         sys.modules.pop("server", None)
+
+
+def test_draft_graph_finds_unreachable_and_non_terminating_routes(monkeypatch):
+    monkeypatch.setenv("MONGO_URL", "mongodb://127.0.0.1:27017")
+    monkeypatch.setenv("DB_NAME", "phase17_graph_test")
+    import importlib
+    import sys
+    sys.modules.pop("server", None)
+    server = importlib.import_module("server")
+    try:
+        draft = {"scenes": [
+            {"sceneId": "start", "choices": [{"nextSceneId": "loop"}]},
+            {"sceneId": "loop", "choices": [{"nextSceneId": "start"}]},
+            {"sceneId": "orphan", "choices": []},
+        ]}
+        report = server._draft_graph_report(draft)
+        assert report["unreachableSceneIds"] == ["orphan"]
+        assert report["terminalSceneIds"] == ["orphan"]
+        assert report["nonTerminatingSceneIds"] == ["start", "loop"]
+    finally:
+        server.client.close()
+        sys.modules.pop("server", None)
+
+
+def test_approved_release_package_has_stable_checksum(monkeypatch):
+    monkeypatch.setenv("MONGO_URL", "mongodb://127.0.0.1:27017")
+    monkeypatch.setenv("DB_NAME", "phase19_package_test")
+    import importlib
+    import sys
+    sys.modules.pop("server", None)
+    server = importlib.import_module("server")
+    try:
+        draft = {"draftId": "draft_" + "c" * 32, "bookId": "book3", "title": "Vamp", "synopsis": "A suitable synopsis.", "branchNotes": "Suitable notes.", "scenes": [], "status": "approved_for_release", "revision": 3, "createdAt": "now", "updatedAt": "now", "updatedBy": "admin@example.com", "reviewApproval": {"approvedAt": "now", "approvedBy": "admin@example.com", "approvedRevision": 2}}
+        package = server._release_package(draft)
+        assert package["format"] == "vampires-choice-release-package/v1"
+        assert len(package["manifest"]["sha256"]) == 64
+        assert package["manifest"]["published"] is False
+    finally:
+        server.client.close()
+        sys.modules.pop("server", None)
