@@ -71,6 +71,8 @@ export interface AdminDraft {
   title: string;
   synopsis: string;
   branchNotes: string;
+  storyValues: Record<string, string>;
+  relationshipValues: Record<string, string>;
   scenes: AdminScene[];
   status: 'draft' | 'ready_for_review' | 'approved_for_release' | 'archived';
   reviewApproval?: { approvedAt: string; approvedBy: string; approvedRevision: number } | null;
@@ -106,7 +108,7 @@ export interface AdminScene {
   choices: AdminChoice[];
 }
 
-export type AdminDraftInput = Pick<AdminDraft, 'bookId' | 'title' | 'synopsis' | 'branchNotes'>;
+export type AdminDraftInput = Pick<AdminDraft, 'bookId' | 'title' | 'synopsis' | 'branchNotes' | 'storyValues' | 'relationshipValues'>;
 export interface AdminDraftValidation { draftId: string; valid: boolean; issues: Array<{ code: string; message: string }>; }
 export interface AdminDraftReviewExport { format: string; draft: AdminDraft; [key: string]: unknown; }
 export interface AdminAiStatus { configured: boolean; model: string | null; }

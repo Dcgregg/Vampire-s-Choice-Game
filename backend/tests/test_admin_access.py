@@ -87,6 +87,11 @@ def test_story_tokens_are_allow_listed_in_manual_drafts(monkeypatch):
             server._validate_manual_scenes([unknown])
         assert error.value.status_code == 422
         assert error.value.detail["error"] == "unknown_story_token"
+        contextual = server.AdminSceneInput(sceneId="context", chapterNumber=1, title="The {{story.humanity}} choice", body="{{relationship.professorVale}} watches from the shadows.", choices=[])
+        server._validate_manual_scenes([contextual], {"humanity": "fragile"}, {"professorVale": "wary"})
+        with pytest.raises(server.HTTPException) as undeclared:
+            server._validate_manual_scenes([contextual], {"corruption": "low"}, {})
+        assert undeclared.value.detail["error"] == "unknown_story_token"
     finally:
         server.client.close()
         sys.modules.pop("server", None)

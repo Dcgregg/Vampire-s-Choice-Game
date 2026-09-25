@@ -26,6 +26,14 @@ None of these actions writes to player-facing content.
 
 Each private draft scene can include dialogue beats with a stable speaker ID,
 editable display name, text and mood. The private playtest renders these as
-distinct talk boxes and resolves the same controlled tokens. Portraits,
-relationship-aware variants and story-defined numeric values are deliberately
-left for the next Phase 20 increment.
+distinct talk boxes and resolves the same controlled tokens. Every beat shows a
+deterministic placeholder portrait based on the speaker display name until
+character artwork is added.
+
+## Story values and relationship wording
+
+The draft editor can define bounded key/value pairs. A value with key
+`humanity` can be used as `{{story.humanity}}`; a relationship value with key
+`professorVale` can be used as `{{relationship.professorVale}}`. Only keys
+declared on that private draft are accepted by validation, so typos do not
+silently reach review or playtest.

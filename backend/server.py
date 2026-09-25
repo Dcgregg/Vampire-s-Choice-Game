@@ -65,6 +65,7 @@ MAX_BODY_BYTES = 512 * 1024  # constrain request size
 PLAYER_ID_RE = re.compile(r"^vc_[A-Za-z0-9_-]{8,64}$")
 STORY_TOKEN_RE = re.compile(r"{{\s*([A-Za-z][A-Za-z0-9_.-]*)\s*}}")
 ALLOWED_STORY_TOKENS = {"player.name", "player.subject", "player.object", "player.possessive", "player.species", "speaker.name"}
+STORY_CONTEXT_KEY_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,39}$")
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
@@ -478,6 +479,8 @@ class AdminDraftInput(BaseModel):
     title: str = Field(min_length=1, max_length=160)
     synopsis: str = Field(max_length=8000)
     branchNotes: str = Field(max_length=12000)
+    storyValues: Dict[str, str] = Field(default_factory=dict, max_length=20)
+    relationshipValues: Dict[str, str] = Field(default_factory=dict, max_length=20)
 
 
 class AdminDraftUpdate(AdminDraftInput):
@@ -545,25 +548,36 @@ class AdminGeneratedDraft(BaseModel):
     scenes: List[AdminSceneInput] = Field(min_length=3, max_length=8)
 
 
-def _validate_manual_scenes(scenes: List[AdminSceneInput]) -> None:
+def _story_context_tokens(story_values: Optional[Dict[str, str]] = None, relationship_values: Optional[Dict[str, str]] = None) -> set[str]:
+    story_values = story_values or {}
+    relationship_values = relationship_values or {}
+    for values in (story_values, relationship_values):
+        for key, value in values.items():
+            if not STORY_CONTEXT_KEY_RE.fullmatch(key) or not isinstance(value, str) or len(value) > 160:
+                raise HTTPException(status_code=422, detail={"error": "invalid_story_context"})
+    return ALLOWED_STORY_TOKENS | {f"story.{key}" for key in story_values} | {f"relationship.{key}" for key in relationship_values}
+
+
+def _validate_manual_scenes(scenes: List[AdminSceneInput], story_values: Optional[Dict[str, str]] = None, relationship_values: Optional[Dict[str, str]] = None) -> None:
+    allowed_tokens = _story_context_tokens(story_values, relationship_values)
     scene_ids = [scene.sceneId for scene in scenes]
     if len(scene_ids) != len(set(scene_ids)):
         raise HTTPException(status_code=422, detail={"error": "duplicate_scene_id"})
     for scene in scenes:
         for value, field in ((scene.title, "title"), (scene.body, "body")):
-            unknown = sorted({token for token in STORY_TOKEN_RE.findall(value) if token not in ALLOWED_STORY_TOKENS})
+            unknown = sorted({token for token in STORY_TOKEN_RE.findall(value) if token not in allowed_tokens})
             if unknown:
                 raise HTTPException(status_code=422, detail={"error": "unknown_story_token", "sceneId": scene.sceneId, "field": field, "tokens": unknown})
         choice_ids = [choice.choiceId for choice in scene.choices]
         if len(choice_ids) != len(set(choice_ids)):
             raise HTTPException(status_code=422, detail={"error": "duplicate_choice_id", "sceneId": scene.sceneId})
         for choice in scene.choices:
-            unknown = sorted({token for token in STORY_TOKEN_RE.findall(choice.text) if token not in ALLOWED_STORY_TOKENS})
+            unknown = sorted({token for token in STORY_TOKEN_RE.findall(choice.text) if token not in allowed_tokens})
             if unknown:
                 raise HTTPException(status_code=422, detail={"error": "unknown_story_token", "sceneId": scene.sceneId, "field": "choice", "tokens": unknown})
         for dialogue in scene.dialogue:
             for value, field in ((dialogue.displayName, "dialogueDisplayName"), (dialogue.text, "dialogueText")):
-                unknown = sorted({token for token in STORY_TOKEN_RE.findall(value) if token not in ALLOWED_STORY_TOKENS})
+                unknown = sorted({token for token in STORY_TOKEN_RE.findall(value) if token not in allowed_tokens})
                 if unknown:
                     raise HTTPException(status_code=422, detail={"error": "unknown_story_token", "sceneId": scene.sceneId, "field": field, "tokens": unknown})
 
@@ -737,6 +751,8 @@ def _public_admin_draft(doc: Dict[str, Any]) -> Dict[str, Any]:
         "title": doc["title"],
         "synopsis": doc["synopsis"],
         "branchNotes": doc["branchNotes"],
+        "storyValues": doc.get("storyValues", {}),
+        "relationshipValues": doc.get("relationshipValues", {}),
         "scenes": doc.get("scenes", []),
         "status": doc.get("status", "draft"),
         "reviewApproval": current_approval,
@@ -939,6 +955,10 @@ async def update_admin_draft(draft_id: str, request: Request, payload: AdminDraf
     _require_admin(user)
     if not re.fullmatch(r"draft_[0-9a-f]{32}", draft_id):
         raise HTTPException(status_code=400, detail={"error": "invalid_draft_id"})
+    current = await admin_drafts.find_one({"draftId": draft_id}, {"_id": 0})
+    if current is None:
+        raise HTTPException(status_code=404, detail={"error": "draft_not_found"})
+    _validate_manual_scenes(current.get("scenes", []), payload.storyValues, payload.relationshipValues)
     now = _now()
     changes = payload.model_dump(exclude={"baseRevision"})
     updated = await admin_drafts.find_one_and_update(
@@ -947,9 +967,6 @@ async def update_admin_draft(draft_id: str, request: Request, payload: AdminDraf
         return_document=True,
     )
     if updated is None:
-        current = await admin_drafts.find_one({"draftId": draft_id}, {"_id": 0})
-        if current is None:
-            raise HTTPException(status_code=404, detail={"error": "draft_not_found"})
         return JSONResponse(status_code=409, content={"error": "revision_conflict", "currentDraft": _public_admin_draft(current)})
     return _public_admin_draft(updated)
 
@@ -961,7 +978,10 @@ async def update_admin_draft_scenes(draft_id: str, request: Request, payload: Ad
     _require_admin(user)
     if not re.fullmatch(r"draft_[0-9a-f]{32}", draft_id):
         raise HTTPException(status_code=400, detail={"error": "invalid_draft_id"})
-    _validate_manual_scenes(payload.scenes)
+    current = await admin_drafts.find_one({"draftId": draft_id}, {"_id": 0})
+    if current is None:
+        raise HTTPException(status_code=404, detail={"error": "draft_not_found"})
+    _validate_manual_scenes(payload.scenes, current.get("storyValues"), current.get("relationshipValues"))
     now = _now()
     updated = await admin_drafts.find_one_and_update(
         {"draftId": draft_id, "revision": payload.baseRevision, "status": {"$ne": "archived"}},
@@ -969,9 +989,6 @@ async def update_admin_draft_scenes(draft_id: str, request: Request, payload: Ad
         return_document=True,
     )
     if updated is None:
-        current = await admin_drafts.find_one({"draftId": draft_id}, {"_id": 0})
-        if current is None:
-            raise HTTPException(status_code=404, detail={"error": "draft_not_found"})
         return JSONResponse(status_code=409, content={"error": "revision_conflict", "currentDraft": _public_admin_draft(current)})
     return _public_admin_draft(updated)
 
