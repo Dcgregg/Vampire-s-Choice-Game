@@ -96,6 +96,7 @@ export interface AdminScene {
 
 export type AdminDraftInput = Pick<AdminDraft, 'bookId' | 'title' | 'synopsis' | 'branchNotes'>;
 export interface AdminDraftValidation { draftId: string; valid: boolean; issues: Array<{ code: string; message: string }>; }
+export interface AdminDraftReviewExport { format: 'vampires-choice-review-export/v1'; exportedAt: string; source: { draftId: string; revision: number; status: string }; draft: AdminDraft; publication: { playerFacing: false; published: false; note: string }; }
 export interface AdminAiStatus { configured: boolean; model: string | null; }
 export interface AdminAiDraftRequest { bookId: string; premise: string; desiredTitle: string; }
 
@@ -175,6 +176,12 @@ export async function validateAdminDraft(draftId: string): Promise<AdminDraftVal
   const r = await fetch(`${API_BASE}/admin/drafts/${draftId}/validation`, { credentials: 'include' });
   if (!r.ok) throw new Error(`validateAdminDraft failed: ${r.status}`);
   return (await r.json()) as AdminDraftValidation;
+}
+
+export async function getAdminDraftReviewExport(draftId: string): Promise<AdminDraftReviewExport> {
+  const r = await fetch(`${API_BASE}/admin/drafts/${draftId}/review-export`, { credentials: 'include' });
+  if (!r.ok) throw new Error(`getAdminDraftReviewExport failed: ${r.status}`);
+  return (await r.json()) as AdminDraftReviewExport;
 }
 
 export async function logoutApi(): Promise<void> {

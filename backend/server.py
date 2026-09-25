@@ -661,6 +661,44 @@ def _public_admin_draft(doc: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _admin_draft_validation_issues(draft: Dict[str, Any]) -> List[Dict[str, str]]:
+    """Editorial checks shared by review and export; never publish content."""
+    known_books = {item.get("id") for item in load_registry().get("series", {}).get("books", []) if isinstance(item, dict)}
+    issues: List[Dict[str, str]] = []
+    if draft.get("bookId") not in known_books:
+        issues.append({"code": "unknown_book", "message": "Choose a book from the series catalogue."})
+    if len(draft.get("title", "").strip()) < 3:
+        issues.append({"code": "title_too_short", "message": "Use a title of at least 3 characters."})
+    if len(draft.get("synopsis", "").strip()) < 40:
+        issues.append({"code": "synopsis_too_short", "message": "Add a synopsis of at least 40 characters."})
+    if len(draft.get("branchNotes", "").strip()) < 40:
+        issues.append({"code": "branch_notes_too_short", "message": "Add at least 40 characters of branch notes."})
+    scenes = draft.get("scenes", [])
+    if not scenes:
+        issues.append({"code": "no_scenes", "message": "Add at least one manually written scene."})
+    else:
+        scene_ids = {scene.get("sceneId") for scene in scenes if isinstance(scene, dict)}
+        for scene in scenes:
+            if not isinstance(scene, dict):
+                continue
+            for choice in scene.get("choices", []):
+                target = choice.get("nextSceneId") if isinstance(choice, dict) else None
+                if target and target not in scene_ids:
+                    issues.append({"code": "unknown_scene_target", "message": f"Choice in '{scene.get('sceneId', 'a scene')}' points to missing scene '{target}'."})
+    return issues
+
+
+def _review_export(draft: Dict[str, Any]) -> Dict[str, Any]:
+    """A portable review package, intentionally separate from playable content."""
+    return {
+        "format": "vampires-choice-review-export/v1",
+        "exportedAt": _now(),
+        "source": {"draftId": draft["draftId"], "revision": draft["revision"], "status": draft.get("status", "draft")},
+        "draft": _public_admin_draft(draft),
+        "publication": {"playerFacing": False, "published": False, "note": "This file is for human review only and cannot update live story content."},
+    }
+
+
 @api.get("/admin/drafts")
 async def list_admin_drafts(request: Request):
     user = await _current_user(request)
@@ -815,29 +853,26 @@ async def validate_admin_draft(draft_id: str, request: Request):
     draft = await admin_drafts.find_one({"draftId": draft_id}, {"_id": 0})
     if draft is None:
         raise HTTPException(status_code=404, detail={"error": "draft_not_found"})
-    known_books = {item.get("id") for item in load_registry().get("series", {}).get("books", []) if isinstance(item, dict)}
-    issues = []
-    if draft.get("bookId") not in known_books:
-        issues.append({"code": "unknown_book", "message": "Choose a book from the series catalogue."})
-    if len(draft.get("title", "").strip()) < 3:
-        issues.append({"code": "title_too_short", "message": "Use a title of at least 3 characters."})
-    if len(draft.get("synopsis", "").strip()) < 40:
-        issues.append({"code": "synopsis_too_short", "message": "Add a synopsis of at least 40 characters."})
-    if len(draft.get("branchNotes", "").strip()) < 40:
-        issues.append({"code": "branch_notes_too_short", "message": "Add at least 40 characters of branch notes."})
-    scenes = draft.get("scenes", [])
-    if not scenes:
-        issues.append({"code": "no_scenes", "message": "Add at least one manually written scene."})
-    else:
-        scene_ids = {scene.get("sceneId") for scene in scenes if isinstance(scene, dict)}
-        for scene in scenes:
-            if not isinstance(scene, dict):
-                continue
-            for choice in scene.get("choices", []):
-                target = choice.get("nextSceneId") if isinstance(choice, dict) else None
-                if target and target not in scene_ids:
-                    issues.append({"code": "unknown_scene_target", "message": f"Choice in '{scene.get('sceneId', 'a scene')}' points to missing scene '{target}'."})
+    issues = _admin_draft_validation_issues(draft)
     return {"draftId": draft_id, "valid": not issues, "issues": issues}
+
+
+@api.get("/admin/drafts/{draft_id}/review-export")
+async def export_admin_draft_for_review(draft_id: str, request: Request):
+    """Export a validated review candidate. This endpoint can never publish it."""
+    user = await _current_user(request)
+    _require_admin(user)
+    if not re.fullmatch(r"draft_[0-9a-f]{32}", draft_id):
+        raise HTTPException(status_code=400, detail={"error": "invalid_draft_id"})
+    draft = await admin_drafts.find_one({"draftId": draft_id}, {"_id": 0})
+    if draft is None:
+        raise HTTPException(status_code=404, detail={"error": "draft_not_found"})
+    if draft.get("status") != "ready_for_review":
+        raise HTTPException(status_code=409, detail={"error": "draft_not_ready_for_review"})
+    issues = _admin_draft_validation_issues(draft)
+    if issues:
+        raise HTTPException(status_code=422, detail={"error": "draft_not_ready_for_export", "issues": issues})
+    return _review_export(draft)
 
 
 @api.post("/auth/logout")

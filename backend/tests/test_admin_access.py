@@ -99,3 +99,26 @@ def test_generated_draft_normalises_common_free_model_variations(monkeypatch):
     finally:
         server.client.close()
         sys.modules.pop("server", None)
+
+
+def test_review_export_is_explicitly_non_player_facing(monkeypatch):
+    monkeypatch.setenv("MONGO_URL", "mongodb://127.0.0.1:27017")
+    monkeypatch.setenv("DB_NAME", "phase14_review_export_test")
+    import importlib
+    import sys
+    sys.modules.pop("server", None)
+    server = importlib.import_module("server")
+    try:
+        draft = {
+            "draftId": "draft_" + "a" * 32, "bookId": "book2", "title": "The Review", "synopsis": "A sufficiently long synopsis for an editorial export test.",
+            "branchNotes": "Sufficiently long notes for the editorial export test.", "scenes": [], "revision": 3, "status": "ready_for_review",
+            "createdAt": "2026-01-01T00:00:00+00:00", "updatedAt": "2026-01-01T00:00:00+00:00", "updatedBy": "admin@example.com",
+        }
+        exported = server._review_export(draft)
+        assert exported["format"] == "vampires-choice-review-export/v1"
+        assert exported["source"] == {"draftId": draft["draftId"], "revision": 3, "status": "ready_for_review"}
+        assert exported["publication"]["published"] is False
+        assert exported["draft"]["title"] == "The Review"
+    finally:
+        server.client.close()
+        sys.modules.pop("server", None)
