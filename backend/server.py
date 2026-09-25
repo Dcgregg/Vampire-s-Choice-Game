@@ -958,7 +958,7 @@ async def update_admin_draft(draft_id: str, request: Request, payload: AdminDraf
     current = await admin_drafts.find_one({"draftId": draft_id}, {"_id": 0})
     if current is None:
         raise HTTPException(status_code=404, detail={"error": "draft_not_found"})
-    _validate_manual_scenes(current.get("scenes", []), payload.storyValues, payload.relationshipValues)
+    _validate_manual_scenes([AdminSceneInput.model_validate(scene) for scene in current.get("scenes", [])], payload.storyValues, payload.relationshipValues)
     now = _now()
     changes = payload.model_dump(exclude={"baseRevision"})
     updated = await admin_drafts.find_one_and_update(
