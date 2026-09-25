@@ -665,7 +665,7 @@ async def generate_admin_draft(request: Request, payload: AdminAiDraftRequest):
     user = await _current_user(request)
     _require_admin(user)
     schema = '{"title":"string","synopsis":"string","branchNotes":"string","scenes":[{"sceneId":"id","chapterNumber":1,"title":"string","body":"string","choices":[{"choiceId":"id","text":"string","nextSceneId":"id or null","effectsNotes":"string"}]}]}'
-    brief = f"Create a self-contained 3 to 6 scene interactive gothic fantasy romance opening for bookId '{payload.bookId}'. Premise: {payload.premise}\nDesired title: {payload.desiredTitle or 'Choose an evocative original title.'}\nUse only scene and choice IDs containing letters, numbers, underscores or hyphens. Every non-null nextSceneId must name a scene in the response. Include choices on most scenes and a terminal final scene. Output exactly this JSON shape: {schema}"
+    brief = f"Create a self-contained 3 to 6 scene interactive gothic fantasy romance opening for bookId '{payload.bookId}'. Premise: {payload.premise}\nDesired title: {payload.desiredTitle or 'Choose an evocative original title.'}\nThis is one chapter: every scene must have chapterNumber set to 1. Scenes are branching beats within that single chapter, not separate chapters. Use only scene and choice IDs containing letters, numbers, underscores or hyphens. Every non-null nextSceneId must name a scene in the response. Include choices on most scenes and a terminal final scene. Output exactly this JSON shape: {schema}"
     try:
         generated = AdminGeneratedDraft.model_validate(_openrouter_json(brief))
     except HTTPException:
