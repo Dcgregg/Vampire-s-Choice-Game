@@ -497,6 +497,14 @@ class AdminChoiceInput(BaseModel):
     text: str = Field(min_length=1, max_length=300)
     nextSceneId: Optional[str] = Field(default=None, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
     effectsNotes: str = Field(default="", max_length=1000)
+    effects: List["AdminEffectInput"] = Field(default_factory=list, max_length=6)
+
+
+class AdminEffectInput(BaseModel):
+    """A bounded, data-only state change for private playtests."""
+    model_config = ConfigDict(extra="forbid")
+    target: str = Field(pattern=r"^(humanity|bloodCoins|affinity\.[A-Za-z0-9_-]+)$", max_length=100)
+    delta: int = Field(ge=-10000, le=10000)
 
 
 class AdminDialogueInput(BaseModel):

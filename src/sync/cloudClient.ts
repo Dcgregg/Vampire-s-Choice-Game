@@ -90,7 +90,9 @@ export interface AdminChoice {
   text: string;
   nextSceneId?: string | null;
   effectsNotes: string;
+  effects?: AdminEffect[];
 }
+export interface AdminEffect { target: string; delta: number; }
 
 export interface AdminDialogue {
   speakerId: string;
