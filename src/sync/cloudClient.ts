@@ -71,11 +71,27 @@ export interface AdminDraft {
   title: string;
   synopsis: string;
   branchNotes: string;
+  scenes: AdminScene[];
   status: 'draft' | 'ready_for_review';
   revision: number;
   createdAt: string;
   updatedAt: string;
   updatedBy: string;
+}
+
+export interface AdminChoice {
+  choiceId: string;
+  text: string;
+  nextSceneId?: string | null;
+  effectsNotes: string;
+}
+
+export interface AdminScene {
+  sceneId: string;
+  chapterNumber: number;
+  title: string;
+  body: string;
+  choices: AdminChoice[];
 }
 
 export type AdminDraftInput = Pick<AdminDraft, 'bookId' | 'title' | 'synopsis' | 'branchNotes'>;
@@ -115,6 +131,15 @@ export async function updateAdminDraft(draftId: string, input: AdminDraftInput, 
   });
   if (r.status === 409) throw new Error('draft_conflict');
   if (!r.ok) throw new Error(`updateAdminDraft failed: ${r.status}`);
+  return (await r.json()) as AdminDraft;
+}
+
+export async function updateAdminDraftScenes(draftId: string, scenes: AdminScene[], baseRevision: number): Promise<AdminDraft> {
+  const r = await fetch(`${API_BASE}/admin/drafts/${draftId}/scenes`, {
+    method: 'PUT', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scenes, baseRevision }),
+  });
+  if (r.status === 409) throw new Error('draft_conflict');
+  if (!r.ok) throw new Error(`updateAdminDraftScenes failed: ${r.status}`);
   return (await r.json()) as AdminDraft;
 }
 
