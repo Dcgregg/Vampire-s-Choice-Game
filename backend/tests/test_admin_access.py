@@ -72,6 +72,26 @@ def test_manual_scenes_reject_duplicate_identifiers(monkeypatch):
         sys.modules.pop("server", None)
 
 
+def test_story_tokens_are_allow_listed_in_manual_drafts(monkeypatch):
+    monkeypatch.setenv("MONGO_URL", "mongodb://127.0.0.1:27017")
+    monkeypatch.setenv("DB_NAME", "phase20_story_tokens_test")
+    import importlib
+    import sys
+    sys.modules.pop("server", None)
+    server = importlib.import_module("server")
+    try:
+        allowed = server.AdminSceneInput(sceneId="arrival", chapterNumber=1, title="Welcome, {{player.name}}", body="{{player.subject}} follows the candlelight.", choices=[server.AdminChoiceInput(choiceId="go", text="Trust {{player.object}} instincts", nextSceneId=None)])
+        server._validate_manual_scenes([allowed])
+        unknown = server.AdminSceneInput(sceneId="unknown", chapterNumber=1, title="Unknown", body="{{player.secret}}", choices=[])
+        with pytest.raises(server.HTTPException) as error:
+            server._validate_manual_scenes([unknown])
+        assert error.value.status_code == 422
+        assert error.value.detail["error"] == "unknown_story_token"
+    finally:
+        server.client.close()
+        sys.modules.pop("server", None)
+
+
 def test_generated_draft_normalises_common_free_model_variations(monkeypatch):
     monkeypatch.setenv("MONGO_URL", "mongodb://127.0.0.1:27017")
     monkeypatch.setenv("DB_NAME", "phase13_generation_normalisation_test")

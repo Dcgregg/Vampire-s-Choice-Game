@@ -1,0 +1,12 @@
+import React from 'react';
+import { Archive, RotateCcw, Trash2 } from 'lucide-react';
+import { AdminDraft, archiveAdminDraft, deleteAdminDraft, restoreAdminDraft } from '../../sync/cloudClient';
+
+export const DraftLifecycleControls: React.FC<{ draft: AdminDraft; onChanged: (draft: AdminDraft) => void; onDeleted: (draftId: string) => void }> = ({ draft, onChanged, onDeleted }) => {
+  const [working, setWorking] = React.useState(false);
+  const [notice, setNotice] = React.useState<string | null>(null);
+  const archive = async () => { setWorking(true); try { onChanged(await archiveAdminDraft(draft.draftId)); setNotice('Draft archived. It remains private and can be restored.'); } catch { setNotice('Could not archive the draft.'); } finally { setWorking(false); } };
+  const restore = async () => { setWorking(true); try { onChanged(await restoreAdminDraft(draft.draftId)); setNotice('Draft restored as editable private content.'); } catch { setNotice('Could not restore the draft.'); } finally { setWorking(false); } };
+  const remove = async () => { if (!window.confirm(`Permanently delete “${draft.title}”? This cannot be undone.`)) return; setWorking(true); try { await deleteAdminDraft(draft.draftId); onDeleted(draft.draftId); } catch { setNotice('Could not delete the draft.'); } finally { setWorking(false); } };
+  return <section className="mt-6 rounded-xl border border-white/10 bg-[#150f1f] p-4"><h2 className="text-sm font-semibold uppercase tracking-wider text-[#c5a059]">Draft lifecycle</h2><p className="mt-1 text-xs text-stone-400">Archiving and deletion apply only to private drafts, never player content.</p><div className="mt-3 flex flex-wrap gap-3">{draft.status === 'archived' ? <button disabled={working} onClick={() => void restore()} className="inline-flex items-center gap-2 rounded border border-[#c5a059]/70 px-3 py-2 text-sm text-[#e5c158] disabled:opacity-50"><RotateCcw className="h-4 w-4" />Restore draft</button> : <button disabled={working} onClick={() => void archive()} className="inline-flex items-center gap-2 rounded border border-white/20 px-3 py-2 text-sm text-stone-200 disabled:opacity-50"><Archive className="h-4 w-4" />Archive draft</button>}<button disabled={working} onClick={() => void remove()} className="inline-flex items-center gap-2 rounded border border-rose-400/60 px-3 py-2 text-sm text-rose-200 disabled:opacity-50"><Trash2 className="h-4 w-4" />Delete permanently</button></div>{notice && <p className="mt-3 text-sm text-[#e5c158]">{notice}</p>}</section>;
+};

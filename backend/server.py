@@ -63,6 +63,8 @@ TRUSTED_PROGRESSION_ENABLED = trusted_progression_routes_enabled(
 SUPPORTED_SAVE_SCHEMA_VERSIONS = {1, 2, 3}
 MAX_BODY_BYTES = 512 * 1024  # constrain request size
 PLAYER_ID_RE = re.compile(r"^vc_[A-Za-z0-9_-]{8,64}$")
+STORY_TOKEN_RE = re.compile(r"{{\s*([A-Za-z][A-Za-z0-9_.-]*)\s*}}")
+ALLOWED_STORY_TOKENS = {"player.name", "player.subject", "player.object", "player.possessive"}
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
@@ -537,9 +539,17 @@ def _validate_manual_scenes(scenes: List[AdminSceneInput]) -> None:
     if len(scene_ids) != len(set(scene_ids)):
         raise HTTPException(status_code=422, detail={"error": "duplicate_scene_id"})
     for scene in scenes:
+        for value, field in ((scene.title, "title"), (scene.body, "body")):
+            unknown = sorted({token for token in STORY_TOKEN_RE.findall(value) if token not in ALLOWED_STORY_TOKENS})
+            if unknown:
+                raise HTTPException(status_code=422, detail={"error": "unknown_story_token", "sceneId": scene.sceneId, "field": field, "tokens": unknown})
         choice_ids = [choice.choiceId for choice in scene.choices]
         if len(choice_ids) != len(set(choice_ids)):
             raise HTTPException(status_code=422, detail={"error": "duplicate_choice_id", "sceneId": scene.sceneId})
+        for choice in scene.choices:
+            unknown = sorted({token for token in STORY_TOKEN_RE.findall(choice.text) if token not in ALLOWED_STORY_TOKENS})
+            if unknown:
+                raise HTTPException(status_code=422, detail={"error": "unknown_story_token", "sceneId": scene.sceneId, "field": "choice", "tokens": unknown})
 
 
 def _import_book_json(content: Dict[str, Any]) -> Dict[str, Any]:
@@ -915,7 +925,7 @@ async def update_admin_draft(draft_id: str, request: Request, payload: AdminDraf
     now = _now()
     changes = payload.model_dump(exclude={"baseRevision"})
     updated = await admin_drafts.find_one_and_update(
-        {"draftId": draft_id, "revision": payload.baseRevision},
+        {"draftId": draft_id, "revision": payload.baseRevision, "status": {"$ne": "archived"}},
         {"$set": {**changes, "status": "draft", "updatedAt": now, "updatedBy": user["email"]}, "$unset": {"reviewApproval": ""}, "$inc": {"revision": 1}},
         return_document=True,
     )
@@ -937,7 +947,7 @@ async def update_admin_draft_scenes(draft_id: str, request: Request, payload: Ad
     _validate_manual_scenes(payload.scenes)
     now = _now()
     updated = await admin_drafts.find_one_and_update(
-        {"draftId": draft_id, "revision": payload.baseRevision},
+        {"draftId": draft_id, "revision": payload.baseRevision, "status": {"$ne": "archived"}},
         {"$set": {"scenes": [scene.model_dump() for scene in payload.scenes], "status": "draft", "updatedAt": now, "updatedBy": user["email"]}, "$unset": {"reviewApproval": ""}, "$inc": {"revision": 1}},
         return_document=True,
     )
@@ -995,6 +1005,53 @@ async def approve_admin_draft_release_candidate(draft_id: str, request: Request)
     if approved is None:
         raise HTTPException(status_code=409, detail={"error": "revision_conflict"})
     return _public_admin_draft(approved)
+
+
+@api.post("/admin/drafts/{draft_id}/archive")
+async def archive_admin_draft(draft_id: str, request: Request):
+    """Hide a draft from active work without deleting it or publishing it."""
+    user = await _current_user(request)
+    _require_admin(user)
+    if not re.fullmatch(r"draft_[0-9a-f]{32}", draft_id):
+        raise HTTPException(status_code=400, detail={"error": "invalid_draft_id"})
+    now = _now()
+    updated = await admin_drafts.find_one_and_update({"draftId": draft_id, "status": {"$ne": "archived"}}, {"$set": {"status": "archived", "archivedAt": now, "archivedBy": user["email"], "updatedAt": now, "updatedBy": user["email"]}, "$inc": {"revision": 1}}, return_document=True)
+    if updated is None:
+        current = await admin_drafts.find_one({"draftId": draft_id}, {"_id": 0})
+        if current is None:
+            raise HTTPException(status_code=404, detail={"error": "draft_not_found"})
+        return _public_admin_draft(current)
+    return _public_admin_draft(updated)
+
+
+@api.post("/admin/drafts/{draft_id}/restore")
+async def restore_admin_draft(draft_id: str, request: Request):
+    """Restore an archived draft to private editable draft status."""
+    user = await _current_user(request)
+    _require_admin(user)
+    if not re.fullmatch(r"draft_[0-9a-f]{32}", draft_id):
+        raise HTTPException(status_code=400, detail={"error": "invalid_draft_id"})
+    now = _now()
+    updated = await admin_drafts.find_one_and_update({"draftId": draft_id, "status": "archived"}, {"$set": {"status": "draft", "updatedAt": now, "updatedBy": user["email"]}, "$unset": {"archivedAt": "", "archivedBy": "", "reviewApproval": ""}, "$inc": {"revision": 1}}, return_document=True)
+    if updated is None:
+        current = await admin_drafts.find_one({"draftId": draft_id}, {"_id": 0})
+        if current is None:
+            raise HTTPException(status_code=404, detail={"error": "draft_not_found"})
+        return _public_admin_draft(current)
+    return _public_admin_draft(updated)
+
+
+@api.delete("/admin/drafts/{draft_id}", status_code=204)
+async def delete_admin_draft(draft_id: str, request: Request):
+    """Permanently remove one private draft; never touches published content."""
+    user = await _current_user(request)
+    _require_admin(user)
+    if not re.fullmatch(r"draft_[0-9a-f]{32}", draft_id):
+        raise HTTPException(status_code=400, detail={"error": "invalid_draft_id"})
+    deleted = await admin_drafts.delete_one({"draftId": draft_id})
+    if not deleted.deleted_count:
+        raise HTTPException(status_code=404, detail={"error": "draft_not_found"})
+    return Response(status_code=204)
 
 
 @api.get("/admin/drafts/{draft_id}/validation")
