@@ -646,6 +646,10 @@ def _sample_story_scenes() -> List[Dict[str, Any]]:
 
 
 def _public_admin_draft(doc: Dict[str, Any]) -> Dict[str, Any]:
+    current_approval = doc.get("reviewApproval")
+    # Phase 16 introduced a history log. Older approved drafts still have the
+    # current approval record, so expose it as their first history entry.
+    history = doc.get("reviewHistory") or ([current_approval] if current_approval else [])
     return {
         "draftId": doc["draftId"],
         "bookId": doc["bookId"],
@@ -654,8 +658,8 @@ def _public_admin_draft(doc: Dict[str, Any]) -> Dict[str, Any]:
         "branchNotes": doc["branchNotes"],
         "scenes": doc.get("scenes", []),
         "status": doc.get("status", "draft"),
-        "reviewApproval": doc.get("reviewApproval"),
-        "reviewHistory": doc.get("reviewHistory", []),
+        "reviewApproval": current_approval,
+        "reviewHistory": history,
         "revision": doc["revision"],
         "createdAt": doc["createdAt"],
         "updatedAt": doc["updatedAt"],

@@ -157,7 +157,7 @@ def test_public_draft_includes_optional_release_approval(monkeypatch):
         public = server._public_admin_draft(draft)
         assert public["status"] == "approved_for_release"
         assert public["reviewApproval"]["approvedRevision"] == 3
-        assert public["reviewHistory"] == []
+        assert public["reviewHistory"] == [draft["reviewApproval"]]
     finally:
         server.client.close()
         sys.modules.pop("server", None)
