@@ -543,6 +543,7 @@ def _openrouter_json(prompt: str) -> Dict[str, Any]:
         ],
         "temperature": 0.85,
         "max_tokens": 5000,
+        "response_format": {"type": "json_object"},
     }).encode()
     upstream = urllib.request.Request(
         "https://openrouter.ai/api/v1/chat/completions",
@@ -556,6 +557,12 @@ def _openrouter_json(prompt: str) -> Dict[str, Any]:
         content = payload["choices"][0]["message"]["content"].strip()
         if content.startswith("```"):
             content = content.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+        # Some free models still add a short sentence around the requested JSON.
+        # Keep the API strict, while accepting that harmless presentation wrapper.
+        if not content.startswith("{"):
+            start, end = content.find("{"), content.rfind("}")
+            if start >= 0 and end > start:
+                content = content[start:end + 1]
         return _json.loads(content)
     except HTTPException:
         raise
