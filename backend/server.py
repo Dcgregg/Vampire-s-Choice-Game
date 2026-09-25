@@ -655,6 +655,7 @@ def _public_admin_draft(doc: Dict[str, Any]) -> Dict[str, Any]:
         "scenes": doc.get("scenes", []),
         "status": doc.get("status", "draft"),
         "reviewApproval": doc.get("reviewApproval"),
+        "reviewHistory": doc.get("reviewHistory", []),
         "revision": doc["revision"],
         "createdAt": doc["createdAt"],
         "updatedAt": doc["updatedAt"],
@@ -862,9 +863,10 @@ async def approve_admin_draft_release_candidate(draft_id: str, request: Request)
     if issues:
         raise HTTPException(status_code=422, detail={"error": "draft_not_ready_for_approval", "issues": issues})
     now = _now()
+    approval = {"approvedAt": now, "approvedBy": user["email"], "approvedRevision": draft["revision"]}
     approved = await admin_drafts.find_one_and_update(
         {"draftId": draft_id, "revision": draft["revision"], "status": "ready_for_review"},
-        {"$set": {"status": "approved_for_release", "reviewApproval": {"approvedAt": now, "approvedBy": user["email"], "approvedRevision": draft["revision"]}, "updatedAt": now, "updatedBy": user["email"]}, "$inc": {"revision": 1}},
+        {"$set": {"status": "approved_for_release", "reviewApproval": approval, "updatedAt": now, "updatedBy": user["email"]}, "$push": {"reviewHistory": {"$each": [approval], "$slice": -20}}, "$inc": {"revision": 1}},
         return_document=True,
     )
     if approved is None:

@@ -74,11 +74,14 @@ export interface AdminDraft {
   scenes: AdminScene[];
   status: 'draft' | 'ready_for_review' | 'approved_for_release';
   reviewApproval?: { approvedAt: string; approvedBy: string; approvedRevision: number } | null;
+  reviewHistory?: AdminReviewApproval[];
   revision: number;
   createdAt: string;
   updatedAt: string;
   updatedBy: string;
 }
+
+export interface AdminReviewApproval { approvedAt: string; approvedBy: string; approvedRevision: number; }
 
 export interface AdminChoice {
   choiceId: string;
