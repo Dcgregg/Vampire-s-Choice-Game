@@ -901,7 +901,29 @@ async def create_admin_character(request: Request, payload: AdminCharacterInput)
         await admin_characters.insert_one(doc)
     except DuplicateKeyError:
         raise HTTPException(status_code=409, detail={"error": "duplicate_character_id"})
-    return doc
+    return {key: value for key, value in doc.items() if key != "_id"}
+
+
+@api.put("/admin/characters/{character_id}")
+async def update_admin_character(character_id: str, request: Request, payload: AdminCharacterInput):
+    user = await _current_user(request)
+    _require_admin(user)
+    if character_id != payload.characterId:
+        raise HTTPException(status_code=400, detail={"error": "character_id_immutable"})
+    updated = await admin_characters.find_one_and_update({"characterId": character_id}, {"$set": {"displayName": payload.displayName, "defaultMood": payload.defaultMood, "updatedAt": _now(), "updatedBy": user["email"]}}, return_document=True)
+    if updated is None:
+        raise HTTPException(status_code=404, detail={"error": "character_not_found"})
+    return {key: value for key, value in updated.items() if key != "_id"}
+
+
+@api.delete("/admin/characters/{character_id}", status_code=204)
+async def delete_admin_character(character_id: str, request: Request):
+    user = await _current_user(request)
+    _require_admin(user)
+    deleted = await admin_characters.delete_one({"characterId": character_id})
+    if not deleted.deleted_count:
+        raise HTTPException(status_code=404, detail={"error": "character_not_found"})
+    return Response(status_code=204)
 
 
 @api.post("/admin/drafts", status_code=201)

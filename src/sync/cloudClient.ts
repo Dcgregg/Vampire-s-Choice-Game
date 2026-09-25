@@ -141,6 +141,17 @@ export async function createAdminCharacter(input: AdminCharacter): Promise<Admin
   return (await r.json()) as AdminCharacter;
 }
 
+export async function updateAdminCharacter(input: AdminCharacter): Promise<AdminCharacter> {
+  const r = await fetch(`${API_BASE}/admin/characters/${input.characterId}`, { method: 'PUT', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
+  if (!r.ok) throw new Error(`updateAdminCharacter failed: ${r.status}`);
+  return (await r.json()) as AdminCharacter;
+}
+
+export async function deleteAdminCharacter(characterId: string): Promise<void> {
+  const r = await fetch(`${API_BASE}/admin/characters/${characterId}`, { method: 'DELETE', credentials: 'include' });
+  if (!r.ok) throw new Error(`deleteAdminCharacter failed: ${r.status}`);
+}
+
 export async function getAdminDrafts(): Promise<AdminDraft[] | null> {
   const r = await fetch(`${API_BASE}/admin/drafts`, { credentials: 'include' });
   if (r.status === 401 || r.status === 403) return null;
