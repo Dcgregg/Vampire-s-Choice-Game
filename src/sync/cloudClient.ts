@@ -125,6 +125,12 @@ export async function createAdminDraft(input: AdminDraftInput): Promise<AdminDra
   return (await r.json()) as AdminDraft;
 }
 
+export async function createSampleAdminDraft(): Promise<AdminDraft> {
+  const r = await fetch(`${API_BASE}/admin/drafts/sample`, { method: 'POST', credentials: 'include' });
+  if (!r.ok) throw new Error(`createSampleAdminDraft failed: ${r.status}`);
+  return (await r.json()) as AdminDraft;
+}
+
 export async function updateAdminDraft(draftId: string, input: AdminDraftInput, baseRevision: number): Promise<AdminDraft> {
   const r = await fetch(`${API_BASE}/admin/drafts/${draftId}`, {
     method: 'PUT', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...input, baseRevision }),

@@ -517,6 +517,18 @@ def _validate_manual_scenes(scenes: List[AdminSceneInput]) -> None:
             raise HTTPException(status_code=422, detail={"error": "duplicate_choice_id", "sceneId": scene.sceneId})
 
 
+def _sample_story_scenes() -> List[Dict[str, Any]]:
+    """A complete, private sample for exercising the admin editor and playtest."""
+    return [
+        {"sceneId": "sample-gates", "chapterNumber": 1, "title": "The Gates of Blackthorn", "body": "Rain traced silver lines down Blackthorn Academy's iron gates. A stranger in a dark coat waited beneath the archway.\n\n‘You came,’ he said. ‘That is either very brave, or very foolish.’", "choices": [{"choiceId": "follow", "text": "Follow the stranger into the academy.", "nextSceneId": "sample-hall", "effectsNotes": "Trust Lucien."}, {"choiceId": "courtyard", "text": "Search the silent courtyard instead.", "nextSceneId": "sample-courtyard", "effectsNotes": "Independent route."}]},
+        {"sceneId": "sample-hall", "chapterNumber": 1, "title": "The Candlelit Hall", "body": "Inside, the academy smelled of old books, candle wax, and roses left too long in water.\n\n‘My name is Lucien,’ the stranger said. ‘Tonight, be careful who you trust.’", "choices": [{"choiceId": "ask", "text": "Ask Lucien why you were invited.", "nextSceneId": "sample-invitation", "effectsNotes": "Direct route."}, {"choiceId": "portrait", "text": "Study the portrait watching you.", "nextSceneId": "sample-portrait", "effectsNotes": "Mystery route."}]},
+        {"sceneId": "sample-courtyard", "chapterNumber": 1, "title": "The Silent Courtyard", "body": "Rainwater gathered around a black stone fountain. In the statue's open palm rested a second envelope, sealed with dark red wax and marked with your name.", "choices": [{"choiceId": "letter", "text": "Take the second envelope.", "nextSceneId": "sample-invitation", "effectsNotes": "Secret clue."}, {"choiceId": "return", "text": "Return to Lucien and demand answers.", "nextSceneId": "sample-hall", "effectsNotes": "Returns with lower trust."}]},
+        {"sceneId": "sample-invitation", "chapterNumber": 1, "title": "The Second Invitation", "body": "The letter contains a single sentence: ‘At midnight, choose who you wish to become.’\n\nThe academy clock begins to strike eleven.", "choices": [{"choiceId": "accept", "text": "Keep the invitation and step into the academy.", "nextSceneId": "sample-ending", "effectsNotes": "Accept the mystery."}]},
+        {"sceneId": "sample-portrait", "chapterNumber": 1, "title": "A Familiar Face", "body": "The portrait shows a young woman wearing your face. Beneath the frame, a brass plaque reads: ‘The last heir of Blackthorn.’", "choices": [{"choiceId": "question", "text": "Demand that Lucien explain the portrait.", "nextSceneId": "sample-ending", "effectsNotes": "Family mystery."}]},
+        {"sceneId": "sample-ending", "chapterNumber": 1, "title": "Midnight Approaches", "body": "The academy doors close behind you. Somewhere in the dark, a bell rings twelve times.\n\nThis is the end of the sample route—for now.", "choices": []},
+    ]
+
+
 def _public_admin_draft(doc: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "draftId": doc["draftId"],
@@ -552,6 +564,29 @@ async def create_admin_draft(request: Request, payload: AdminDraftInput):
         "revision": 1,
         "status": "draft",
         "scenes": [],
+        "createdAt": now,
+        "updatedAt": now,
+        "updatedBy": user["email"],
+    }
+    await admin_drafts.insert_one(doc)
+    return _public_admin_draft(doc)
+
+
+@api.post("/admin/drafts/sample", status_code=201)
+async def create_sample_admin_draft(request: Request):
+    """Create a complete testing draft for an allow-listed administrator."""
+    user = await _current_user(request)
+    _require_admin(user)
+    now = _now()
+    doc = {
+        "draftId": f"draft_{uuid.uuid4().hex}",
+        "bookId": "book2",
+        "title": "Sample: The Invitation",
+        "synopsis": "A complete private sample story for testing manual scene authoring and draft playthroughs at Blackthorn Academy.",
+        "branchNotes": "This sample is safe to edit or delete. It demonstrates a complete six-scene route with linked choices and no player-facing publication.",
+        "scenes": _sample_story_scenes(),
+        "revision": 1,
+        "status": "draft",
         "createdAt": now,
         "updatedAt": now,
         "updatedBy": user["email"],
