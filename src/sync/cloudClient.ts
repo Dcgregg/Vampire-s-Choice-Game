@@ -98,6 +98,7 @@ export interface AdminDialogue {
   text: string;
   mood: string;
 }
+export interface AdminCharacter { characterId: string; displayName: string; defaultMood: string; }
 
 export interface AdminScene {
   sceneId: string;
@@ -125,6 +126,19 @@ export async function getAdminCatalog(): Promise<AdminCatalog | null> {
   if (r.status === 401 || r.status === 403) return null;
   if (!r.ok) throw new Error(`getAdminCatalog failed: ${r.status}`);
   return (await r.json()) as AdminCatalog;
+}
+
+export async function getAdminCharacters(): Promise<AdminCharacter[] | null> {
+  const r = await fetch(`${API_BASE}/admin/characters`, { credentials: 'include' });
+  if (r.status === 401 || r.status === 403) return null;
+  if (!r.ok) throw new Error(`getAdminCharacters failed: ${r.status}`);
+  return ((await r.json()) as { characters: AdminCharacter[] }).characters;
+}
+
+export async function createAdminCharacter(input: AdminCharacter): Promise<AdminCharacter> {
+  const r = await fetch(`${API_BASE}/admin/characters`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
+  if (!r.ok) throw new Error(`createAdminCharacter failed: ${r.status}`);
+  return (await r.json()) as AdminCharacter;
 }
 
 export async function getAdminDrafts(): Promise<AdminDraft[] | null> {

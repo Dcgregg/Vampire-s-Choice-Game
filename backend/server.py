@@ -76,6 +76,7 @@ sessions = db["user_sessions"]
 progression_ledgers = db["progression_ledgers"]
 progression_events = db["progression_events"]
 admin_drafts = db["admin_drafts"]
+admin_characters = db["admin_characters"]
 
 app = FastAPI(title="Vampire's Choice Cloud Save API")
 auth_logger = logging.getLogger("vampires_choice.auth")
@@ -113,6 +114,7 @@ async def _ensure_indexes():
     await sessions.create_index("session_token", unique=True)
     await users.create_index("email", unique=True)
     await admin_drafts.create_index("draftId", unique=True)
+    await admin_characters.create_index("characterId", unique=True)
     await admin_drafts.create_index([("bookId", 1), ("updatedAt", -1)])
     await ensure_trusted_progression_indexes(
         activation_value=TRUSTED_PROGRESSION_ACTIVATION,
@@ -507,6 +509,15 @@ class AdminDialogueInput(BaseModel):
     mood: str = Field(default="neutral", max_length=40, pattern=r"^[A-Za-z0-9_-]+$")
 
 
+class AdminCharacterInput(BaseModel):
+    """Portable character metadata for private authoring and dialogue UI."""
+
+    model_config = ConfigDict(extra="forbid")
+    characterId: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
+    displayName: str = Field(min_length=1, max_length=120)
+    defaultMood: str = Field(default="neutral", max_length=40, pattern=r"^[A-Za-z0-9_-]+$")
+
+
 class AdminSceneInput(BaseModel):
     """A bounded manual scene format, separate from published story content."""
 
@@ -870,6 +881,27 @@ async def admin_ai_status(request: Request):
     user = await _current_user(request)
     _require_admin(user)
     return {"configured": bool(OPENROUTER_API_KEY), "model": OPENROUTER_MODEL if OPENROUTER_API_KEY else None}
+
+
+@api.get("/admin/characters")
+async def list_admin_characters(request: Request):
+    user = await _current_user(request)
+    _require_admin(user)
+    characters = await admin_characters.find({}, {"_id": 0}).sort("displayName", 1).to_list(length=200)
+    return {"characters": characters}
+
+
+@api.post("/admin/characters", status_code=201)
+async def create_admin_character(request: Request, payload: AdminCharacterInput):
+    """Create private authoring metadata; never changes player content."""
+    user = await _current_user(request)
+    _require_admin(user)
+    doc = {**payload.model_dump(), "createdAt": _now(), "createdBy": user["email"]}
+    try:
+        await admin_characters.insert_one(doc)
+    except DuplicateKeyError:
+        raise HTTPException(status_code=409, detail={"error": "duplicate_character_id"})
+    return doc
 
 
 @api.post("/admin/drafts", status_code=201)

@@ -1,0 +1,14 @@
+import React from 'react';
+import { Plus, Users } from 'lucide-react';
+import { AdminCharacter, createAdminCharacter, getAdminCharacters } from '../../sync/cloudClient';
+
+const blank: AdminCharacter = { characterId: '', displayName: '', defaultMood: 'neutral' };
+
+export const CharacterCatalogue: React.FC = () => {
+  const [characters, setCharacters] = React.useState<AdminCharacter[] | null>(null);
+  const [form, setForm] = React.useState<AdminCharacter>(blank);
+  const [notice, setNotice] = React.useState<string | null>(null);
+  React.useEffect(() => { void getAdminCharacters().then(setCharacters).catch(() => setCharacters([])); }, []);
+  const add = async () => { if (!form.characterId.trim() || !form.displayName.trim()) { setNotice('Give the character an ID and display name.'); return; } try { const created = await createAdminCharacter(form); setCharacters((items) => [...(items ?? []), created].toSorted((a, b) => a.displayName.localeCompare(b.displayName))); setForm(blank); setNotice('Character added to the private authoring catalogue.'); } catch { setNotice('Could not add the character. Its ID may already exist.'); } };
+  return <section className="mt-6 rounded-xl border border-white/10 bg-[#150f1f] p-5"><h2 className="flex items-center gap-2 font-display text-xl text-[#f5f0e6]"><Users className="h-5 w-5 text-[#e5c158]" />Character catalogue</h2><p className="mt-1 text-sm text-stone-400">Stable IDs are reusable story data. Dialogue selects these characters and fills their display name and mood.</p><div className="mt-4 grid gap-2 sm:grid-cols-3"><input value={form.characterId} onChange={(event) => setForm({ ...form, characterId: event.target.value })} placeholder="Stable ID, e.g. professor-vale" className="rounded border border-white/15 bg-black/20 p-2 text-sm text-[#f5f0e6]" /><input value={form.displayName} onChange={(event) => setForm({ ...form, displayName: event.target.value })} placeholder="Display name" className="rounded border border-white/15 bg-black/20 p-2 text-sm text-[#f5f0e6]" /><input value={form.defaultMood} onChange={(event) => setForm({ ...form, defaultMood: event.target.value })} placeholder="Default mood" className="rounded border border-white/15 bg-black/20 p-2 text-sm text-[#f5f0e6]" /></div><button onClick={() => void add()} className="mt-3 inline-flex items-center gap-1 rounded border border-[#c5a059]/70 px-3 py-2 text-sm text-[#e5c158]"><Plus className="h-4 w-4" />Add character</button>{notice && <p className="mt-2 text-sm text-[#e5c158]">{notice}</p>}{characters && characters.length > 0 && <div className="mt-4 flex flex-wrap gap-2">{characters.map((character) => <span key={character.characterId} className="rounded border border-white/10 px-2 py-1 text-xs text-stone-300">{character.displayName} · {character.characterId}</span>)}</div>}</section>;
+};
