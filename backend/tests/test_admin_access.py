@@ -101,6 +101,26 @@ def test_story_tokens_are_allow_listed_in_manual_drafts(monkeypatch):
         sys.modules.pop("server", None)
 
 
+def test_private_playtest_values_and_choice_gates_are_bounded(monkeypatch):
+    monkeypatch.setenv("MONGO_URL", "mongodb://127.0.0.1:27017")
+    monkeypatch.setenv("DB_NAME", "phase24_private_mechanics_test")
+    import importlib
+    import sys
+    sys.modules.pop("server", None)
+    server = importlib.import_module("server")
+    try:
+        draft = server.AdminDraftInput(bookId="book3", title="The Gate", synopsis="A private test draft.", branchNotes="A private test branch note.", playtestValues={"humanity": 80, "affinity.professor": 1})
+        assert draft.playtestValues["humanity"] == 80
+        with pytest.raises(Exception):
+            server.AdminDraftInput(bookId="book3", title="The Gate", synopsis="", branchNotes="", playtestValues={"danger": 1})
+        choice = server.AdminChoiceInput(choiceId="enter", text="Enter", nextSceneId=None, conditions=[server.AdminConditionInput(target="humanity", operator="gte", value=50)], costs=[server.AdminEffectInput(target="bloodCoins", delta=-10)], effects=[server.AdminEffectInput(target="affinity.professor", delta=5)])
+        assert choice.conditions[0].operator == "gte"
+        assert choice.costs[0].delta == -10
+    finally:
+        server.client.close()
+        sys.modules.pop("server", None)
+
+
 def test_generated_draft_normalises_common_free_model_variations(monkeypatch):
     monkeypatch.setenv("MONGO_URL", "mongodb://127.0.0.1:27017")
     monkeypatch.setenv("DB_NAME", "phase13_generation_normalisation_test")

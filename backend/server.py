@@ -20,7 +20,7 @@ import secrets
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Literal
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends
@@ -28,7 +28,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo.errors import DuplicateKeyError
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 import uuid
 
 from progression.feature_gated_routes import (
@@ -490,6 +490,15 @@ class AdminDraftInput(BaseModel):
     branchNotes: str = Field(max_length=12000)
     storyValues: Dict[str, str] = Field(default_factory=dict, max_length=20)
     relationshipValues: Dict[str, str] = Field(default_factory=dict, max_length=20)
+    playtestValues: Dict[str, int] = Field(default_factory=lambda: {"humanity": 100, "bloodCoins": 250}, max_length=20)
+
+    @field_validator("playtestValues")
+    @classmethod
+    def _validate_playtest_values(cls, values: Dict[str, int]) -> Dict[str, int]:
+        for key, value in values.items():
+            if not re.fullmatch(r"^(humanity|bloodCoins|affinity\.[A-Za-z0-9_-]+)$", key) or not isinstance(value, int) or not -10000 <= value <= 10000:
+                raise ValueError("invalid_playtest_value")
+        return values
 
 
 class AdminDraftUpdate(AdminDraftInput):
@@ -504,6 +513,8 @@ class AdminChoiceInput(BaseModel):
     text: str = Field(min_length=1, max_length=300)
     nextSceneId: Optional[str] = Field(default=None, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
     effectsNotes: str = Field(default="", max_length=1000)
+    conditions: List["AdminConditionInput"] = Field(default_factory=list, max_length=6)
+    costs: List["AdminEffectInput"] = Field(default_factory=list, max_length=6)
     effects: List["AdminEffectInput"] = Field(default_factory=list, max_length=6)
 
 
@@ -512,6 +523,14 @@ class AdminEffectInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     target: str = Field(pattern=r"^(humanity|bloodCoins|affinity\.[A-Za-z0-9_-]+)$", max_length=100)
     delta: int = Field(ge=-10000, le=10000)
+
+
+class AdminConditionInput(BaseModel):
+    """A numeric gate used only by the private draft playtest."""
+    model_config = ConfigDict(extra="forbid")
+    target: str = Field(pattern=r"^(humanity|bloodCoins|affinity\.[A-Za-z0-9_-]+)$", max_length=100)
+    operator: Literal["gte", "lte", "eq"] = "gte"
+    value: int = Field(ge=-10000, le=10000)
 
 
 class AdminDialogueInput(BaseModel):
@@ -598,9 +617,10 @@ def _validate_manual_scenes(scenes: List[AdminSceneInput], story_values: Optiona
         if len(choice_ids) != len(set(choice_ids)):
             raise HTTPException(status_code=422, detail={"error": "duplicate_choice_id", "sceneId": scene.sceneId})
         for choice in scene.choices:
-            effect_targets = [effect.target for effect in choice.effects]
-            if len(effect_targets) != len(set(effect_targets)):
-                raise HTTPException(status_code=422, detail={"error": "duplicate_effect_target", "sceneId": scene.sceneId, "choiceId": choice.choiceId})
+            for name, entries in (("condition", choice.conditions), ("cost", choice.costs), ("effect", choice.effects)):
+                targets = [entry.target for entry in entries]
+                if len(targets) != len(set(targets)):
+                    raise HTTPException(status_code=422, detail={"error": f"duplicate_{name}_target", "sceneId": scene.sceneId, "choiceId": choice.choiceId})
             unknown = sorted({token for token in STORY_TOKEN_RE.findall(choice.text) if token not in allowed_tokens})
             if unknown:
                 raise HTTPException(status_code=422, detail={"error": "unknown_story_token", "sceneId": scene.sceneId, "field": "choice", "tokens": unknown})
@@ -782,6 +802,7 @@ def _public_admin_draft(doc: Dict[str, Any]) -> Dict[str, Any]:
         "branchNotes": doc["branchNotes"],
         "storyValues": doc.get("storyValues", {}),
         "relationshipValues": doc.get("relationshipValues", {}),
+        "playtestValues": doc.get("playtestValues", {"humanity": 100, "bloodCoins": 250}),
         "scenes": doc.get("scenes", []),
         "status": doc.get("status", "draft"),
         "reviewApproval": current_approval,
@@ -1249,6 +1270,19 @@ async def list_admin_release_versions(request: Request):
     _require_admin(user)
     docs = await admin_releases.find({}, {"_id": 0, "snapshot": 0}).sort([("bookId", 1), ("version", -1)]).to_list(length=200)
     return {"releases": [_public_admin_release(doc) for doc in docs], "playerFacing": False}
+
+
+@api.get("/admin/releases/{release_id}")
+async def get_admin_release_version(release_id: str, request: Request):
+    """Return one frozen snapshot for human review; never for player playback."""
+    user = await _current_user(request)
+    _require_admin(user)
+    if not re.fullmatch(r"release_[0-9a-f]{32}", release_id):
+        raise HTTPException(status_code=400, detail={"error": "invalid_release_id"})
+    release = await admin_releases.find_one({"releaseId": release_id}, {"_id": 0})
+    if release is None:
+        raise HTTPException(status_code=404, detail={"error": "release_not_found"})
+    return {**_public_admin_release(release), "snapshot": release["snapshot"], "playerFacing": False, "published": False}
 
 
 @api.post("/admin/drafts/{draft_id}/release-versions", status_code=201)

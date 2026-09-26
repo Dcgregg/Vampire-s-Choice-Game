@@ -73,6 +73,7 @@ export interface AdminDraft {
   branchNotes: string;
   storyValues: Record<string, string>;
   relationshipValues: Record<string, string>;
+  playtestValues: Record<string, number>;
   scenes: AdminScene[];
   status: 'draft' | 'ready_for_review' | 'approved_for_release' | 'archived';
   reviewApproval?: { approvedAt: string; approvedBy: string; approvedRevision: number } | null;
@@ -96,15 +97,19 @@ export interface AdminReleaseVersion {
   selectedAt?: string | null;
   selectedBy?: string | null;
 }
+export type AdminReleaseSnapshot = AdminReleaseVersion & { snapshot: AdminDraft; playerFacing: false; published: false };
 
 export interface AdminChoice {
   choiceId: string;
   text: string;
   nextSceneId?: string | null;
   effectsNotes: string;
+  conditions?: AdminCondition[];
+  costs?: AdminEffect[];
   effects?: AdminEffect[];
 }
 export interface AdminEffect { target: string; delta: number; }
+export interface AdminCondition { target: string; operator: 'gte' | 'lte' | 'eq'; value: number; }
 
 export interface AdminDialogue {
   speakerId: string;
@@ -123,7 +128,7 @@ export interface AdminScene {
   choices: AdminChoice[];
 }
 
-export type AdminDraftInput = Pick<AdminDraft, 'bookId' | 'title' | 'synopsis' | 'branchNotes' | 'storyValues' | 'relationshipValues'>;
+export type AdminDraftInput = Pick<AdminDraft, 'bookId' | 'title' | 'synopsis' | 'branchNotes' | 'storyValues' | 'relationshipValues' | 'playtestValues'>;
 export interface AdminDraftValidation { draftId: string; valid: boolean; issues: Array<{ code: string; message: string }>; }
 export interface AdminDraftReviewExport { format: string; draft: AdminDraft; [key: string]: unknown; }
 export interface AdminAiStatus { configured: boolean; model: string | null; }
@@ -277,6 +282,12 @@ export async function createAdminReleaseVersion(draftId: string): Promise<AdminR
   const r = await fetch(`${API_BASE}/admin/drafts/${draftId}/release-versions`, { method: 'POST', credentials: 'include' });
   if (!r.ok) throw new Error(`createAdminReleaseVersion failed: ${r.status}`);
   return (await r.json()) as AdminReleaseVersion;
+}
+
+export async function getAdminReleaseVersion(releaseId: string): Promise<AdminReleaseSnapshot> {
+  const r = await fetch(`${API_BASE}/admin/releases/${releaseId}`, { credentials: 'include' });
+  if (!r.ok) throw new Error(`getAdminReleaseVersion failed: ${r.status}`);
+  return (await r.json()) as AdminReleaseSnapshot;
 }
 
 export async function selectAdminReleaseVersion(releaseId: string, rollback = false): Promise<AdminReleaseVersion> {
