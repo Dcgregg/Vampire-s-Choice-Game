@@ -89,13 +89,15 @@ export interface AdminReleaseVersion {
   releaseId: string;
   bookId: string;
   version: number;
-  status: 'prepared' | 'selected';
+  status: 'prepared' | 'selected' | 'staged';
   source: { draftId: string; approvedRevision: number; currentRevision: number };
   manifest: { sha256: string; sceneCount: number; playerFacing: false; published: false };
   createdAt: string;
   createdBy: string;
   selectedAt?: string | null;
   selectedBy?: string | null;
+  stagedAt?: string | null;
+  stagedBy?: string | null;
 }
 export type AdminReleaseSnapshot = AdminReleaseVersion & { snapshot: AdminDraft; playerFacing: false; published: false };
 
@@ -294,6 +296,12 @@ export async function selectAdminReleaseVersion(releaseId: string, rollback = fa
   const action = rollback ? 'rollback' : 'select';
   const r = await fetch(`${API_BASE}/admin/releases/${releaseId}/${action}`, { method: 'POST', credentials: 'include' });
   if (!r.ok) throw new Error(`selectAdminReleaseVersion failed: ${r.status}`);
+  return (await r.json()) as AdminReleaseVersion;
+}
+
+export async function stageAdminReleaseVersion(releaseId: string): Promise<AdminReleaseVersion> {
+  const r = await fetch(`${API_BASE}/admin/releases/${releaseId}/stage`, { method: 'POST', credentials: 'include' });
+  if (!r.ok) throw new Error(`stageAdminReleaseVersion failed: ${r.status}`);
   return (await r.json()) as AdminReleaseVersion;
 }
 

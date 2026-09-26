@@ -276,6 +276,21 @@ def test_release_registry_metadata_cannot_claim_player_publication(monkeypatch):
         sys.modules.pop("server", None)
 
 
+def test_staged_release_preview_flag_defaults_off(monkeypatch):
+    monkeypatch.setenv("MONGO_URL", "mongodb://127.0.0.1:27017")
+    monkeypatch.setenv("DB_NAME", "phase28_staging_flag_test")
+    monkeypatch.delenv("STAGED_RELEASE_PREVIEW", raising=False)
+    import importlib
+    import sys
+    sys.modules.pop("server", None)
+    server = importlib.import_module("server")
+    try:
+        assert server.STAGED_RELEASE_PREVIEW_ENABLED is False
+    finally:
+        server.client.close()
+        sys.modules.pop("server", None)
+
+
 def test_book_json_import_converts_engine_scenes_to_private_draft(monkeypatch):
     monkeypatch.setenv("MONGO_URL", "mongodb://127.0.0.1:27017")
     monkeypatch.setenv("DB_NAME", "phase17_json_import_test")

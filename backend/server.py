@@ -51,6 +51,7 @@ GOOGLE_OAUTH_SUCCESS_URL = os.environ.get("GOOGLE_OAUTH_SUCCESS_URL", "/")
 ADMIN_EMAILS = configured_admin_emails(os.environ.get("ADMIN_EMAILS"))
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "openrouter/free")
+STAGED_RELEASE_PREVIEW_ENABLED = os.environ.get("STAGED_RELEASE_PREVIEW", "").strip().lower() == "true"
 SESSION_TTL_DAYS = 7
 SESSION_COOKIE_NAME = "__Host-vc_session"
 LEGACY_SESSION_COOKIE_NAME = "session_token"
@@ -920,6 +921,8 @@ def _public_admin_release(doc: Dict[str, Any]) -> Dict[str, Any]:
         "createdBy": doc["createdBy"],
         "selectedAt": doc.get("selectedAt"),
         "selectedBy": doc.get("selectedBy"),
+        "stagedAt": doc.get("stagedAt"),
+        "stagedBy": doc.get("stagedBy"),
     }
 
 
@@ -1285,6 +1288,32 @@ async def get_admin_release_version(release_id: str, request: Request):
     return {**_public_admin_release(release), "snapshot": release["snapshot"], "playerFacing": False, "published": False}
 
 
+@api.get("/staged-releases/{book_id}")
+async def get_staged_release_preview(book_id: str):
+    """Read-only staging preview of one frozen version.
+
+    This is intentionally off unless ``STAGED_RELEASE_PREVIEW=true`` is set in
+    a staging/preview environment. It returns immutable content only and has
+    no save, progression, or production-publishing side effect.
+    """
+    if not STAGED_RELEASE_PREVIEW_ENABLED:
+        raise HTTPException(status_code=404, detail={"error": "staged_release_preview_disabled"})
+    if not re.fullmatch(r"book[1-9][0-9]*", book_id):
+        raise HTTPException(status_code=400, detail={"error": "invalid_book_id"})
+    release = await admin_releases.find_one({"bookId": book_id, "status": "staged"}, {"_id": 0})
+    if release is None:
+        raise HTTPException(status_code=404, detail={"error": "staged_release_not_found"})
+    return {
+        "format": "vampires-choice-staged-release/v1",
+        "environment": "staging-preview",
+        "playerFacing": True,
+        "published": False,
+        "release": _public_admin_release(release),
+        "snapshot": release["snapshot"],
+        "note": "Read-only staging preview. This endpoint does not read or write player saves.",
+    }
+
+
 @api.post("/admin/drafts/{draft_id}/release-versions", status_code=201)
 async def create_admin_release_version(draft_id: str, request: Request):
     """Freeze an approved draft as an immutable, private release candidate."""
@@ -1321,6 +1350,30 @@ async def select_admin_release_version(release_id: str, request: Request):
         return_document=True,
     )
     return _public_admin_release(selected)
+
+
+@api.post("/admin/releases/{release_id}/stage")
+async def stage_admin_release_version(release_id: str, request: Request):
+    """Promote a selected immutable version to the flag-gated staging preview."""
+    user = await _current_user(request)
+    _require_admin(user)
+    if not STAGED_RELEASE_PREVIEW_ENABLED:
+        raise HTTPException(status_code=409, detail={"error": "staged_release_preview_disabled"})
+    if not re.fullmatch(r"release_[0-9a-f]{32}", release_id):
+        raise HTTPException(status_code=400, detail={"error": "invalid_release_id"})
+    release = await admin_releases.find_one({"releaseId": release_id}, {"_id": 0})
+    if release is None:
+        raise HTTPException(status_code=404, detail={"error": "release_not_found"})
+    if release.get("status") not in {"selected", "staged"}:
+        raise HTTPException(status_code=409, detail={"error": "release_not_selected"})
+    now = _now()
+    await admin_releases.update_many({"bookId": release["bookId"], "status": "staged"}, {"$set": {"status": "prepared"}, "$unset": {"stagedAt": "", "stagedBy": ""}})
+    staged = await admin_releases.find_one_and_update(
+        {"releaseId": release_id},
+        {"$set": {"status": "staged", "stagedAt": now, "stagedBy": user["email"]}},
+        return_document=True,
+    )
+    return _public_admin_release(staged)
 
 
 @api.post("/admin/releases/{release_id}/rollback")
