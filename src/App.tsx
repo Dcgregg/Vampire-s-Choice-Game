@@ -20,13 +20,18 @@ import { AchievementsScreen } from './components/screens/AchievementsScreen';
 import { SettingsScreen } from './components/screens/SettingsScreen';
 import { AboutScreen } from './components/screens/AboutScreen';
 import { StagedReleasePreviewScreen } from './components/screens/StagedReleasePreviewScreen';
+import { BetaReleasePlayerScreen } from './components/screens/BetaReleasePlayerScreen';
 
 const MainContent: React.FC = () => {
   const { activeScreen } = useGameState();
   const stagedBook = new URLSearchParams(window.location.search).get('stagedBook');
+  const betaBook = new URLSearchParams(window.location.search).get('betaBook');
 
   if (stagedBook && /^book[1-9][0-9]*$/.test(stagedBook)) {
     return <div className="min-h-screen bg-[#09070c] text-[#ede5d8] font-sans selection:bg-rose-950 selection:text-rose-200"><StagedReleasePreviewScreen bookId={stagedBook} /></div>;
+  }
+  if (betaBook && /^book[1-9][0-9]*$/.test(betaBook)) {
+    return <div className="min-h-screen bg-[#09070c] text-[#ede5d8] font-sans selection:bg-rose-950 selection:text-rose-200"><BetaReleasePlayerScreen bookId={betaBook} /></div>;
   }
 
   return (

@@ -121,6 +121,26 @@ def test_private_playtest_values_and_choice_gates_are_bounded(monkeypatch):
         sys.modules.pop("server", None)
 
 
+def test_beta_access_allow_list_is_normalised_and_beta_sessions_reuse_choice_rules(monkeypatch):
+    monkeypatch.setenv("MONGO_URL", "mongodb://127.0.0.1:27017")
+    monkeypatch.setenv("DB_NAME", "phase36_beta_test")
+    import importlib
+    import sys
+    sys.modules.pop("server", None)
+    server = importlib.import_module("server")
+    try:
+        assert server.BetaAccessUpdate(emails=[" Tester@Example.com ", "tester@example.com"]).emails == ["tester@example.com"]
+        with pytest.raises(Exception):
+            server.BetaAccessUpdate(emails=["not-an-email"])
+        snapshot = {"playtestValues": {"humanity": 100, "bloodCoins": 20}, "scenes": [{"sceneId": "opening", "chapterNumber": 1, "choices": [{"choiceId": "pay", "nextSceneId": None, "costs": [{"target": "bloodCoins", "delta": -10}], "effects": [{"target": "humanity", "delta": -20}]}]}]}
+        applied = server._apply_staged_preview_choice({"sceneId": "opening", "stats": server._staged_preview_stats(snapshot)}, snapshot, "opening", "pay")
+        assert applied["stats"] == {"humanity": 80, "bloodCoins": 10}
+        assert applied["event"]["audit"][0]["delta"] == -10
+    finally:
+        server.client.close()
+        sys.modules.pop("server", None)
+
+
 def test_generated_draft_normalises_common_free_model_variations(monkeypatch):
     monkeypatch.setenv("MONGO_URL", "mongodb://127.0.0.1:27017")
     monkeypatch.setenv("DB_NAME", "phase13_generation_normalisation_test")

@@ -98,11 +98,17 @@ export interface AdminReleaseVersion {
   selectedBy?: string | null;
   stagedAt?: string | null;
   stagedBy?: string | null;
+  betaEnabled?: boolean;
+  betaEnabledAt?: string | null;
+  betaEnabledBy?: string | null;
 }
 export type AdminReleaseSnapshot = AdminReleaseVersion & { snapshot: AdminDraft; playerFacing: false; published: false };
 export interface StagedReleasePreview { format: string; environment: 'staging-preview'; playerFacing: true; published: false; release: AdminReleaseVersion; snapshot: AdminDraft; note: string; }
 export interface StagedPreviewAudit { kind: 'cost' | 'effect'; target: string; before: number; delta: number; after: number; }
 export interface StagedPreviewSession { sessionId: string; sessionToken?: string; bookId: string; releaseId: string; contentVersion: number; sceneId: string | null; stats: Record<string, number>; history: Array<{ sceneId: string; choiceId: string; audit: StagedPreviewAudit[]; at: string }>; revision: number; createdAt: string; updatedAt: string; expiresAt: string; stagingOnly: true; }
+export interface BetaReleasePreview { format: string; environment: 'beta'; release: AdminReleaseVersion; snapshot: AdminDraft; note: string; }
+export interface BetaPlayerSession { sessionId: string; bookId: string; releaseId: string; contentVersion: number; sceneId: string | null; stats: Record<string, number>; history: Array<{ sceneId: string; choiceId: string; audit: StagedPreviewAudit[]; at: string }>; revision: number; createdAt: string; updatedAt: string; betaOnly: true; }
+export interface BetaReadiness { releaseId: string; bookId: string; version: number; enabled: boolean; featureEnabled: boolean; invitedCount: number; sessionCount: number; completedSessionCount: number; feedbackCount: number; accountSavesTouched: 0; productionPublished: false; }
 
 export interface AdminChoice {
   choiceId: string;
@@ -313,6 +319,16 @@ export async function getStagedReleaseReadiness(releaseId: string): Promise<Stag
   if (!r.ok) throw new Error(`getStagedReleaseReadiness failed: ${r.status}`);
   return (await r.json()) as StagedReleaseReadiness;
 }
+export async function configureBetaReleaseAccess(releaseId: string, emails: string[]): Promise<{ enabled: boolean; invitedCount: number }> {
+  const r = await fetch(`${API_BASE}/admin/releases/${releaseId}/beta-access`, { method: 'PUT', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ emails }) });
+  if (!r.ok) throw new Error(`configureBetaReleaseAccess failed: ${r.status}`);
+  return (await r.json()) as { enabled: boolean; invitedCount: number };
+}
+export async function getBetaReleaseReadiness(releaseId: string): Promise<BetaReadiness> {
+  const r = await fetch(`${API_BASE}/admin/releases/${releaseId}/beta-readiness`, { credentials: 'include' });
+  if (!r.ok) throw new Error(`getBetaReleaseReadiness failed: ${r.status}`);
+  return (await r.json()) as BetaReadiness;
+}
 
 export async function getStagedReleasePreview(bookId: string): Promise<StagedReleasePreview | null> {
   const r = await fetch(`${API_BASE}/staged-releases/${encodeURIComponent(bookId)}`);
@@ -341,6 +357,31 @@ export async function restartStagedPreviewSession(sessionId: string, sessionToke
   const r = await fetch(`${API_BASE}/staged-preview-sessions/${sessionId}/restart`, { method: 'POST', headers: stagedTokenHeaders(sessionToken) });
   if (!r.ok) throw new Error(`restartStagedPreviewSession failed: ${r.status}`);
   return (await r.json()) as StagedPreviewSession;
+}
+export async function getBetaReleasePreview(bookId: string): Promise<BetaReleasePreview | null> {
+  const r = await fetch(`${API_BASE}/beta-releases/${encodeURIComponent(bookId)}`, { credentials: 'include' });
+  if (r.status === 401 || r.status === 403 || r.status === 404) return null;
+  if (!r.ok) throw new Error(`getBetaReleasePreview failed: ${r.status}`);
+  return (await r.json()) as BetaReleasePreview;
+}
+export async function createOrResumeBetaSession(bookId: string): Promise<BetaPlayerSession> {
+  const r = await fetch(`${API_BASE}/beta-releases/${encodeURIComponent(bookId)}/sessions`, { method: 'POST', credentials: 'include' });
+  if (!r.ok) throw new Error(`createOrResumeBetaSession failed: ${r.status}`);
+  return (await r.json()) as BetaPlayerSession;
+}
+export async function chooseBetaSession(sessionId: string, payload: { sceneId: string; choiceId: string; baseRevision: number }): Promise<BetaPlayerSession> {
+  const r = await fetch(`${API_BASE}/beta-player-sessions/${sessionId}/choices`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+  if (!r.ok) throw new Error(`chooseBetaSession failed: ${r.status}`);
+  return (await r.json()) as BetaPlayerSession;
+}
+export async function restartBetaSession(sessionId: string): Promise<BetaPlayerSession> {
+  const r = await fetch(`${API_BASE}/beta-player-sessions/${sessionId}/restart`, { method: 'POST', credentials: 'include' });
+  if (!r.ok) throw new Error(`restartBetaSession failed: ${r.status}`);
+  return (await r.json()) as BetaPlayerSession;
+}
+export async function submitBetaFeedback(sessionId: string, message: string): Promise<void> {
+  const r = await fetch(`${API_BASE}/beta-player-sessions/${sessionId}/feedback`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message }) });
+  if (!r.ok) throw new Error(`submitBetaFeedback failed: ${r.status}`);
 }
 
 export async function logoutApi(): Promise<void> {

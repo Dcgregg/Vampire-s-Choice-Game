@@ -52,6 +52,7 @@ ADMIN_EMAILS = configured_admin_emails(os.environ.get("ADMIN_EMAILS"))
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "openrouter/free")
 STAGED_RELEASE_PREVIEW_ENABLED = os.environ.get("STAGED_RELEASE_PREVIEW", "").strip().lower() == "true"
+BETA_RELEASES_ENABLED = os.environ.get("BETA_RELEASES", "").strip().lower() == "true"
 SESSION_TTL_DAYS = 7
 SESSION_COOKIE_NAME = "__Host-vc_session"
 LEGACY_SESSION_COOKIE_NAME = "session_token"
@@ -80,6 +81,9 @@ admin_drafts = db["admin_drafts"]
 admin_characters = db["admin_characters"]
 admin_releases = db["admin_releases"]
 staged_preview_sessions = db["staged_preview_sessions"]
+beta_release_access = db["beta_release_access"]
+beta_player_sessions = db["beta_player_sessions"]
+beta_feedback = db["beta_feedback"]
 
 app = FastAPI(title="Vampire's Choice Cloud Save API")
 auth_logger = logging.getLogger("vampires_choice.auth")
@@ -127,6 +131,10 @@ async def _ensure_indexes():
     await staged_preview_sessions.create_index("sessionId", unique=True)
     await staged_preview_sessions.create_index("expiresAt", expireAfterSeconds=0)
     await staged_preview_sessions.create_index([("releaseId", 1), ("updatedAt", -1)])
+    await beta_release_access.create_index([("releaseId", 1), ("email", 1)], unique=True)
+    await beta_player_sessions.create_index([("releaseId", 1), ("userId", 1)], unique=True)
+    await beta_player_sessions.create_index([("releaseId", 1), ("updatedAt", -1)])
+    await beta_feedback.create_index([("releaseId", 1), ("createdAt", -1)])
     await admin_drafts.create_index([("bookId", 1), ("updatedAt", -1)])
     await ensure_trusted_progression_indexes(
         activation_value=TRUSTED_PROGRESSION_ACTIVATION,
@@ -598,6 +606,25 @@ class StagedPreviewChoiceInput(BaseModel):
     baseRevision: int = Field(ge=1)
 
 
+class BetaAccessUpdate(BaseModel):
+    """An explicit allow-list for a signed-in, non-public beta."""
+    model_config = ConfigDict(extra="forbid")
+    emails: List[str] = Field(default_factory=list, max_length=100)
+
+    @field_validator("emails")
+    @classmethod
+    def normalise_emails(cls, emails: List[str]) -> List[str]:
+        cleaned = sorted({email.strip().lower() for email in emails if isinstance(email, str) and email.strip()})
+        if any(not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email) for email in cleaned):
+            raise ValueError("invalid beta tester email")
+        return cleaned
+
+
+class BetaFeedbackInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    message: str = Field(min_length=3, max_length=2000)
+
+
 class AdminGeneratedDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
     title: str = Field(min_length=1, max_length=160)
@@ -935,6 +962,9 @@ def _public_admin_release(doc: Dict[str, Any]) -> Dict[str, Any]:
         "selectedBy": doc.get("selectedBy"),
         "stagedAt": doc.get("stagedAt"),
         "stagedBy": doc.get("stagedBy"),
+        "betaEnabled": bool(doc.get("betaEnabled")),
+        "betaEnabledAt": doc.get("betaEnabledAt"),
+        "betaEnabledBy": doc.get("betaEnabledBy"),
     }
 
 
@@ -957,6 +987,25 @@ def _staged_condition_passes(stats: Dict[str, int], condition: Dict[str, Any]) -
 
 def _public_staged_preview_session(doc: Dict[str, Any]) -> Dict[str, Any]:
     return {"sessionId": doc["sessionId"], "bookId": doc["bookId"], "releaseId": doc["releaseId"], "contentVersion": doc["contentVersion"], "sceneId": doc["sceneId"], "stats": doc["stats"], "history": doc.get("history", []), "revision": doc["revision"], "createdAt": doc["createdAt"], "updatedAt": doc["updatedAt"], "expiresAt": doc["expiresAt"], "stagingOnly": True}
+
+
+def _public_beta_session(doc: Dict[str, Any]) -> Dict[str, Any]:
+    """A real signed-in tester session, deliberately separate from account_saves."""
+    return {"sessionId": doc["sessionId"], "bookId": doc["bookId"], "releaseId": doc["releaseId"], "contentVersion": doc["contentVersion"], "sceneId": doc["sceneId"], "stats": doc["stats"], "history": doc.get("history", []), "revision": doc["revision"], "createdAt": doc["createdAt"], "updatedAt": doc["updatedAt"], "betaOnly": True}
+
+
+async def _beta_release_for_user(book_id: str, user: Dict[str, Any]) -> Dict[str, Any]:
+    if not BETA_RELEASES_ENABLED:
+        raise HTTPException(status_code=404, detail={"error": "beta_releases_disabled"})
+    if not re.fullmatch(r"book[1-9][0-9]*", book_id):
+        raise HTTPException(status_code=400, detail={"error": "invalid_book_id"})
+    release = await admin_releases.find_one({"bookId": book_id, "status": "staged", "betaEnabled": True}, {"_id": 0})
+    if release is None:
+        raise HTTPException(status_code=404, detail={"error": "beta_release_not_found"})
+    access = await beta_release_access.find_one({"releaseId": release["releaseId"], "email": user["email"].lower()}, {"_id": 0})
+    if access is None:
+        raise HTTPException(status_code=403, detail={"error": "beta_access_required"})
+    return release
 
 
 def _apply_staged_preview_choice(session: Dict[str, Any], snapshot: Dict[str, Any], scene_id: str, choice_id: str) -> Dict[str, Any]:
@@ -1509,6 +1558,112 @@ async def get_admin_staged_release_readiness(release_id: str, request: Request):
     session_count = await staged_preview_sessions.count_documents({"releaseId": release_id})
     completed_count = await staged_preview_sessions.count_documents({"releaseId": release_id, "sceneId": None})
     return {"releaseId": release_id, "bookId": release["bookId"], "version": release["version"], "staged": release.get("status") == "staged", "featureEnabled": STAGED_RELEASE_PREVIEW_ENABLED, "sessionCount": session_count, "completedSessionCount": completed_count, "playerSavesTouched": 0, "productionPublished": False}
+
+
+@api.get("/admin/releases/{release_id}/beta-readiness")
+async def get_admin_beta_readiness(release_id: str, request: Request):
+    """Report on a limited beta without exposing participants' personal data."""
+    user = await _current_user(request)
+    _require_admin(user)
+    release = await admin_releases.find_one({"releaseId": release_id}, {"_id": 0})
+    if release is None:
+        raise HTTPException(status_code=404, detail={"error": "release_not_found"})
+    invited = await beta_release_access.count_documents({"releaseId": release_id})
+    sessions_count = await beta_player_sessions.count_documents({"releaseId": release_id})
+    completed = await beta_player_sessions.count_documents({"releaseId": release_id, "sceneId": None})
+    feedback_count = await beta_feedback.count_documents({"releaseId": release_id})
+    return {"releaseId": release_id, "bookId": release["bookId"], "version": release["version"], "enabled": bool(release.get("betaEnabled")), "featureEnabled": BETA_RELEASES_ENABLED, "invitedCount": invited, "sessionCount": sessions_count, "completedSessionCount": completed, "feedbackCount": feedback_count, "accountSavesTouched": 0, "productionPublished": False}
+
+
+@api.put("/admin/releases/{release_id}/beta-access")
+async def configure_admin_beta_access(release_id: str, request: Request, payload: BetaAccessUpdate):
+    """Enable a selected, authenticated beta only for the supplied email list."""
+    user = await _current_user(request)
+    _require_admin(user)
+    if not BETA_RELEASES_ENABLED:
+        raise HTTPException(status_code=409, detail={"error": "beta_releases_disabled"})
+    release = await admin_releases.find_one({"releaseId": release_id}, {"_id": 0})
+    if release is None:
+        raise HTTPException(status_code=404, detail={"error": "release_not_found"})
+    if release.get("status") != "staged":
+        raise HTTPException(status_code=409, detail={"error": "beta_release_not_staged"})
+    if not payload.emails:
+        await beta_release_access.delete_many({"releaseId": release_id})
+        await admin_releases.update_one({"releaseId": release_id}, {"$set": {"betaEnabled": False, "betaDisabledAt": _now(), "betaDisabledBy": user["email"]}})
+        return {"releaseId": release_id, "enabled": False, "invitedCount": 0, "playerFacing": False, "productionPublished": False}
+    await beta_release_access.delete_many({"releaseId": release_id})
+    now = _now()
+    await beta_release_access.insert_many([{"releaseId": release_id, "email": email, "createdAt": now, "createdBy": user["email"]} for email in payload.emails])
+    await admin_releases.update_one({"releaseId": release_id}, {"$set": {"betaEnabled": True, "betaEnabledAt": now, "betaEnabledBy": user["email"]}, "$unset": {"betaDisabledAt": "", "betaDisabledBy": ""}})
+    return {"releaseId": release_id, "enabled": True, "invitedCount": len(payload.emails), "playerFacing": True, "productionPublished": False}
+
+
+@api.get("/beta-releases/{book_id}")
+async def get_beta_release(book_id: str, request: Request):
+    user = await _current_user(request)
+    release = await _beta_release_for_user(book_id, user)
+    return {"format": "vampires-choice-private-beta/v1", "environment": "beta", "release": _public_admin_release(release), "snapshot": release["snapshot"], "note": "Invite-only beta. It uses a version-pinned beta session and never modifies the account save."}
+
+
+@api.post("/beta-releases/{book_id}/sessions")
+async def create_or_resume_beta_session(book_id: str, request: Request):
+    user = await _current_user(request)
+    release = await _beta_release_for_user(book_id, user)
+    existing = await beta_player_sessions.find_one({"releaseId": release["releaseId"], "userId": user["user_id"]}, {"_id": 0})
+    if existing:
+        return _public_beta_session(existing)
+    scenes = [scene for scene in release["snapshot"].get("scenes", []) if isinstance(scene, dict) and scene.get("sceneId")]
+    if not scenes:
+        raise HTTPException(status_code=422, detail={"error": "beta_release_has_no_scenes"})
+    now = _now()
+    doc = {"sessionId": f"beta_{uuid.uuid4().hex}", "releaseId": release["releaseId"], "bookId": book_id, "userId": user["user_id"], "contentVersion": release["version"], "sceneId": min(scenes, key=lambda scene: (int(scene.get("chapterNumber", 1)), scene["sceneId"]))["sceneId"], "stats": _staged_preview_stats(release["snapshot"]), "history": [], "revision": 1, "createdAt": now, "updatedAt": now}
+    try:
+        await beta_player_sessions.insert_one(doc)
+    except DuplicateKeyError:
+        doc = await beta_player_sessions.find_one({"releaseId": release["releaseId"], "userId": user["user_id"]}, {"_id": 0})
+    return _public_beta_session(doc)
+
+
+@api.post("/beta-player-sessions/{session_id}/choices")
+async def choose_beta_session(session_id: str, request: Request, payload: StagedPreviewChoiceInput):
+    user = await _current_user(request)
+    session = await beta_player_sessions.find_one({"sessionId": session_id, "userId": user["user_id"]}, {"_id": 0})
+    if session is None:
+        raise HTTPException(status_code=404, detail={"error": "beta_session_not_found"})
+    release = await _beta_release_for_user(session["bookId"], user)
+    if release["releaseId"] != session["releaseId"]:
+        raise HTTPException(status_code=409, detail={"error": "beta_release_changed"})
+    if session["revision"] != payload.baseRevision:
+        raise HTTPException(status_code=409, detail={"error": "beta_session_revision_conflict"})
+    updated = _apply_staged_preview_choice(session, release["snapshot"], payload.sceneId, payload.choiceId)
+    next_session = await beta_player_sessions.find_one_and_update({"sessionId": session_id, "userId": user["user_id"], "revision": payload.baseRevision}, {"$set": {"sceneId": updated["sceneId"], "stats": updated["stats"], "updatedAt": _now()}, "$push": {"history": {"$each": [updated["event"]], "$slice": -200}}, "$inc": {"revision": 1}}, return_document=True)
+    if next_session is None:
+        raise HTTPException(status_code=409, detail={"error": "beta_session_revision_conflict"})
+    return _public_beta_session(next_session)
+
+
+@api.post("/beta-player-sessions/{session_id}/restart")
+async def restart_beta_session(session_id: str, request: Request):
+    user = await _current_user(request)
+    session = await beta_player_sessions.find_one({"sessionId": session_id, "userId": user["user_id"]}, {"_id": 0})
+    if session is None:
+        raise HTTPException(status_code=404, detail={"error": "beta_session_not_found"})
+    release = await _beta_release_for_user(session["bookId"], user)
+    scenes = [scene for scene in release["snapshot"].get("scenes", []) if isinstance(scene, dict) and scene.get("sceneId")]
+    opening = min(scenes, key=lambda scene: (int(scene.get("chapterNumber", 1)), scene["sceneId"]))["sceneId"]
+    next_session = await beta_player_sessions.find_one_and_update({"sessionId": session_id, "userId": user["user_id"]}, {"$set": {"sceneId": opening, "stats": _staged_preview_stats(release["snapshot"]), "history": [], "updatedAt": _now()}, "$inc": {"revision": 1}}, return_document=True)
+    return _public_beta_session(next_session)
+
+
+@api.post("/beta-player-sessions/{session_id}/feedback", status_code=201)
+async def submit_beta_feedback(session_id: str, request: Request, payload: BetaFeedbackInput):
+    user = await _current_user(request)
+    session = await beta_player_sessions.find_one({"sessionId": session_id, "userId": user["user_id"]}, {"_id": 0})
+    if session is None:
+        raise HTTPException(status_code=404, detail={"error": "beta_session_not_found"})
+    await _beta_release_for_user(session["bookId"], user)
+    await beta_feedback.insert_one({"feedbackId": f"feedback_{uuid.uuid4().hex}", "releaseId": session["releaseId"], "sessionId": session_id, "userId": user["user_id"], "message": payload.message.strip(), "createdAt": _now()})
+    return {"ok": True}
 
 
 @api.post("/admin/releases/{release_id}/rollback")
