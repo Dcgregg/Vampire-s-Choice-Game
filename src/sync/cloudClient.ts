@@ -100,6 +100,7 @@ export interface AdminReleaseVersion {
   stagedBy?: string | null;
 }
 export type AdminReleaseSnapshot = AdminReleaseVersion & { snapshot: AdminDraft; playerFacing: false; published: false };
+export interface StagedReleasePreview { format: string; environment: 'staging-preview'; playerFacing: true; published: false; release: AdminReleaseVersion; snapshot: AdminDraft; note: string; }
 
 export interface AdminChoice {
   choiceId: string;
@@ -303,6 +304,13 @@ export async function stageAdminReleaseVersion(releaseId: string): Promise<Admin
   const r = await fetch(`${API_BASE}/admin/releases/${releaseId}/stage`, { method: 'POST', credentials: 'include' });
   if (!r.ok) throw new Error(`stageAdminReleaseVersion failed: ${r.status}`);
   return (await r.json()) as AdminReleaseVersion;
+}
+
+export async function getStagedReleasePreview(bookId: string): Promise<StagedReleasePreview | null> {
+  const r = await fetch(`${API_BASE}/staged-releases/${encodeURIComponent(bookId)}`);
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error(`getStagedReleasePreview failed: ${r.status}`);
+  return (await r.json()) as StagedReleasePreview;
 }
 
 export async function logoutApi(): Promise<void> {
