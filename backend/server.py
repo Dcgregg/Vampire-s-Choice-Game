@@ -598,6 +598,9 @@ def _validate_manual_scenes(scenes: List[AdminSceneInput], story_values: Optiona
         if len(choice_ids) != len(set(choice_ids)):
             raise HTTPException(status_code=422, detail={"error": "duplicate_choice_id", "sceneId": scene.sceneId})
         for choice in scene.choices:
+            effect_targets = [effect.target for effect in choice.effects]
+            if len(effect_targets) != len(set(effect_targets)):
+                raise HTTPException(status_code=422, detail={"error": "duplicate_effect_target", "sceneId": scene.sceneId, "choiceId": choice.choiceId})
             unknown = sorted({token for token in STORY_TOKEN_RE.findall(choice.text) if token not in allowed_tokens})
             if unknown:
                 raise HTTPException(status_code=422, detail={"error": "unknown_story_token", "sceneId": scene.sceneId, "field": "choice", "tokens": unknown})

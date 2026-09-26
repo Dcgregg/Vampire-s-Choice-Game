@@ -67,6 +67,10 @@ def test_manual_scenes_reject_duplicate_identifiers(monkeypatch):
         with pytest.raises(server.HTTPException) as duplicate_choices_error:
             server._validate_manual_scenes([duplicate_choices])
         assert duplicate_choices_error.value.status_code == 422
+        duplicate_effects = server.AdminSceneInput(sceneId="effects", chapterNumber=1, title="Effects", body="Candles burn.", choices=[server.AdminChoiceInput(choiceId="go", text="Go", nextSceneId=None, effects=[server.AdminEffectInput(target="humanity", delta=-1), server.AdminEffectInput(target="humanity", delta=2)])])
+        with pytest.raises(server.HTTPException) as duplicate_effects_error:
+            server._validate_manual_scenes([duplicate_effects])
+        assert duplicate_effects_error.value.detail["error"] == "duplicate_effect_target"
     finally:
         server.client.close()
         sys.modules.pop("server", None)
