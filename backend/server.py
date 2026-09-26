@@ -77,6 +77,7 @@ progression_ledgers = db["progression_ledgers"]
 progression_events = db["progression_events"]
 admin_drafts = db["admin_drafts"]
 admin_characters = db["admin_characters"]
+admin_releases = db["admin_releases"]
 
 app = FastAPI(title="Vampire's Choice Cloud Save API")
 auth_logger = logging.getLogger("vampires_choice.auth")
@@ -115,6 +116,12 @@ async def _ensure_indexes():
     await users.create_index("email", unique=True)
     await admin_drafts.create_index("draftId", unique=True)
     await admin_characters.create_index("characterId", unique=True)
+    await admin_releases.create_index("releaseId", unique=True)
+    await admin_releases.create_index([("bookId", 1), ("version", 1)], unique=True)
+    # One approved snapshot creates one immutable release version. Editing a
+    # draft clears its approval, so a later approval deliberately creates a
+    # new source revision instead of silently replacing this record.
+    await admin_releases.create_index([("source.draftId", 1), ("source.approvedRevision", 1)], unique=True)
     await admin_drafts.create_index([("bookId", 1), ("updatedAt", -1)])
     await ensure_trusted_progression_indexes(
         activation_value=TRUSTED_PROGRESSION_ACTIVATION,
@@ -876,6 +883,56 @@ def _review_export(draft: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _public_admin_release(doc: Dict[str, Any]) -> Dict[str, Any]:
+    """Expose release-registry metadata without turning it into game content."""
+    return {
+        "releaseId": doc["releaseId"],
+        "bookId": doc["bookId"],
+        "version": doc["version"],
+        "status": doc.get("status", "prepared"),
+        "source": doc["source"],
+        "manifest": doc["manifest"],
+        "createdAt": doc["createdAt"],
+        "createdBy": doc["createdBy"],
+        "selectedAt": doc.get("selectedAt"),
+        "selectedBy": doc.get("selectedBy"),
+    }
+
+
+async def _create_release_version(draft: Dict[str, Any], user: Dict[str, Any]) -> Dict[str, Any]:
+    """Freeze one approved draft revision for the private release registry.
+
+    This is intentionally not connected to ``load_registry`` or any player
+    endpoint. A later, separately authorised integration can consume this
+    immutable snapshot after compatibility checks are defined.
+    """
+    package = _release_package(draft)
+    source = package["source"]
+    for _ in range(3):
+        latest = await admin_releases.find_one({"bookId": draft["bookId"]}, {"version": 1}, sort=[("version", -1)])
+        version = int(latest.get("version", 0)) + 1 if latest else 1
+        now = _now()
+        doc = {
+            "releaseId": f"release_{uuid.uuid4().hex}",
+            "bookId": draft["bookId"],
+            "version": version,
+            "status": "prepared",
+            "source": source,
+            "manifest": package["manifest"],
+            "snapshot": package["draft"],
+            "createdAt": now,
+            "createdBy": user["email"],
+        }
+        try:
+            await admin_releases.insert_one(doc)
+            return _public_admin_release(doc)
+        except DuplicateKeyError:
+            existing = await admin_releases.find_one({"source.draftId": source["draftId"], "source.approvedRevision": source["approvedRevision"]}, {"_id": 0})
+            if existing:
+                return _public_admin_release(existing)
+    raise HTTPException(status_code=409, detail={"error": "release_version_conflict"})
+
+
 @api.get("/admin/drafts")
 async def list_admin_drafts(request: Request):
     user = await _current_user(request)
@@ -1180,6 +1237,59 @@ async def export_admin_draft_for_review(draft_id: str, request: Request):
     if issues:
         raise HTTPException(status_code=422, detail={"error": "draft_not_ready_for_export", "issues": issues})
     return _review_export(draft)
+
+
+@api.get("/admin/releases")
+async def list_admin_release_versions(request: Request):
+    """List frozen release candidates; none are served to players."""
+    user = await _current_user(request)
+    _require_admin(user)
+    docs = await admin_releases.find({}, {"_id": 0, "snapshot": 0}).sort([("bookId", 1), ("version", -1)]).to_list(length=200)
+    return {"releases": [_public_admin_release(doc) for doc in docs], "playerFacing": False}
+
+
+@api.post("/admin/drafts/{draft_id}/release-versions", status_code=201)
+async def create_admin_release_version(draft_id: str, request: Request):
+    """Freeze an approved draft as an immutable, private release candidate."""
+    user = await _current_user(request)
+    _require_admin(user)
+    if not re.fullmatch(r"draft_[0-9a-f]{32}", draft_id):
+        raise HTTPException(status_code=400, detail={"error": "invalid_draft_id"})
+    draft = await admin_drafts.find_one({"draftId": draft_id}, {"_id": 0})
+    if draft is None:
+        raise HTTPException(status_code=404, detail={"error": "draft_not_found"})
+    if draft.get("status") != "approved_for_release":
+        raise HTTPException(status_code=409, detail={"error": "draft_not_approved_for_release"})
+    issues = _admin_draft_validation_issues(draft)
+    if issues:
+        raise HTTPException(status_code=422, detail={"error": "draft_not_ready_for_release_version", "issues": issues})
+    return await _create_release_version(draft, user)
+
+
+@api.post("/admin/releases/{release_id}/select")
+async def select_admin_release_version(release_id: str, request: Request):
+    """Select a registry version for later rollout; never changes live content."""
+    user = await _current_user(request)
+    _require_admin(user)
+    if not re.fullmatch(r"release_[0-9a-f]{32}", release_id):
+        raise HTTPException(status_code=400, detail={"error": "invalid_release_id"})
+    release = await admin_releases.find_one({"releaseId": release_id}, {"_id": 0})
+    if release is None:
+        raise HTTPException(status_code=404, detail={"error": "release_not_found"})
+    now = _now()
+    await admin_releases.update_many({"bookId": release["bookId"], "status": "selected"}, {"$set": {"status": "prepared"}, "$unset": {"selectedAt": "", "selectedBy": ""}})
+    selected = await admin_releases.find_one_and_update(
+        {"releaseId": release_id},
+        {"$set": {"status": "selected", "selectedAt": now, "selectedBy": user["email"]}},
+        return_document=True,
+    )
+    return _public_admin_release(selected)
+
+
+@api.post("/admin/releases/{release_id}/rollback")
+async def rollback_admin_release_version(release_id: str, request: Request):
+    """Re-select a prior immutable candidate in the private registry only."""
+    return await select_admin_release_version(release_id, request)
 
 
 @api.post("/auth/logout")

@@ -84,6 +84,18 @@ export interface AdminDraft {
 }
 
 export interface AdminReviewApproval { approvedAt: string; approvedBy: string; approvedRevision: number; }
+export interface AdminReleaseVersion {
+  releaseId: string;
+  bookId: string;
+  version: number;
+  status: 'prepared' | 'selected';
+  source: { draftId: string; approvedRevision: number; currentRevision: number };
+  manifest: { sha256: string; sceneCount: number; playerFacing: false; published: false };
+  createdAt: string;
+  createdBy: string;
+  selectedAt?: string | null;
+  selectedBy?: string | null;
+}
 
 export interface AdminChoice {
   choiceId: string;
@@ -252,6 +264,26 @@ export async function getAdminDraftReviewExport(draftId: string): Promise<AdminD
   const r = await fetch(`${API_BASE}/admin/drafts/${draftId}/review-export`, { credentials: 'include' });
   if (!r.ok) throw new Error(`getAdminDraftReviewExport failed: ${r.status}`);
   return (await r.json()) as AdminDraftReviewExport;
+}
+
+export async function getAdminReleaseVersions(): Promise<AdminReleaseVersion[] | null> {
+  const r = await fetch(`${API_BASE}/admin/releases`, { credentials: 'include' });
+  if (r.status === 401 || r.status === 403) return null;
+  if (!r.ok) throw new Error(`getAdminReleaseVersions failed: ${r.status}`);
+  return ((await r.json()) as { releases: AdminReleaseVersion[] }).releases;
+}
+
+export async function createAdminReleaseVersion(draftId: string): Promise<AdminReleaseVersion> {
+  const r = await fetch(`${API_BASE}/admin/drafts/${draftId}/release-versions`, { method: 'POST', credentials: 'include' });
+  if (!r.ok) throw new Error(`createAdminReleaseVersion failed: ${r.status}`);
+  return (await r.json()) as AdminReleaseVersion;
+}
+
+export async function selectAdminReleaseVersion(releaseId: string, rollback = false): Promise<AdminReleaseVersion> {
+  const action = rollback ? 'rollback' : 'select';
+  const r = await fetch(`${API_BASE}/admin/releases/${releaseId}/${action}`, { method: 'POST', credentials: 'include' });
+  if (!r.ok) throw new Error(`selectAdminReleaseVersion failed: ${r.status}`);
+  return (await r.json()) as AdminReleaseVersion;
 }
 
 export async function logoutApi(): Promise<void> {

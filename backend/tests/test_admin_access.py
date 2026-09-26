@@ -228,6 +228,30 @@ def test_approved_release_package_has_stable_checksum(monkeypatch):
         sys.modules.pop("server", None)
 
 
+def test_release_registry_metadata_cannot_claim_player_publication(monkeypatch):
+    monkeypatch.setenv("MONGO_URL", "mongodb://127.0.0.1:27017")
+    monkeypatch.setenv("DB_NAME", "phase22_release_registry_test")
+    import importlib
+    import sys
+    sys.modules.pop("server", None)
+    server = importlib.import_module("server")
+    try:
+        release = server._public_admin_release({
+            "releaseId": "release_" + "d" * 32, "bookId": "book3", "version": 2, "status": "selected",
+            "source": {"draftId": "draft_" + "c" * 32, "approvedRevision": 4, "currentRevision": 5},
+            "manifest": {"sha256": "a" * 64, "sceneCount": 4, "playerFacing": False, "published": False},
+            "createdAt": "now", "createdBy": "admin@example.com", "selectedAt": "later", "selectedBy": "admin@example.com",
+            "snapshot": {"secret": "not exposed"},
+        })
+        assert release["status"] == "selected"
+        assert release["manifest"]["playerFacing"] is False
+        assert release["manifest"]["published"] is False
+        assert "snapshot" not in release
+    finally:
+        server.client.close()
+        sys.modules.pop("server", None)
+
+
 def test_book_json_import_converts_engine_scenes_to_private_draft(monkeypatch):
     monkeypatch.setenv("MONGO_URL", "mongodb://127.0.0.1:27017")
     monkeypatch.setenv("DB_NAME", "phase17_json_import_test")
