@@ -79,6 +79,7 @@ progression_events = db["progression_events"]
 admin_drafts = db["admin_drafts"]
 admin_characters = db["admin_characters"]
 admin_releases = db["admin_releases"]
+staged_preview_sessions = db["staged_preview_sessions"]
 
 app = FastAPI(title="Vampire's Choice Cloud Save API")
 auth_logger = logging.getLogger("vampires_choice.auth")
@@ -123,6 +124,9 @@ async def _ensure_indexes():
     # draft clears its approval, so a later approval deliberately creates a
     # new source revision instead of silently replacing this record.
     await admin_releases.create_index([("source.draftId", 1), ("source.approvedRevision", 1)], unique=True)
+    await staged_preview_sessions.create_index("sessionId", unique=True)
+    await staged_preview_sessions.create_index("expiresAt", expireAfterSeconds=0)
+    await staged_preview_sessions.create_index([("releaseId", 1), ("updatedAt", -1)])
     await admin_drafts.create_index([("bookId", 1), ("updatedAt", -1)])
     await ensure_trusted_progression_indexes(
         activation_value=TRUSTED_PROGRESSION_ACTIVATION,
@@ -586,6 +590,14 @@ class AdminBookJsonImport(BaseModel):
     content: Dict[str, Any]
 
 
+class StagedPreviewChoiceInput(BaseModel):
+    """One optimistic-concurrency choice in an isolated staging session."""
+    model_config = ConfigDict(extra="forbid")
+    sceneId: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
+    choiceId: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_-]+$")
+    baseRevision: int = Field(ge=1)
+
+
 class AdminGeneratedDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
     title: str = Field(min_length=1, max_length=160)
@@ -924,6 +936,51 @@ def _public_admin_release(doc: Dict[str, Any]) -> Dict[str, Any]:
         "stagedAt": doc.get("stagedAt"),
         "stagedBy": doc.get("stagedBy"),
     }
+
+
+def _staged_preview_session_token(request: Request) -> str:
+    token = request.headers.get("x-staged-preview-token", "")
+    if not token or len(token) < 32:
+        raise HTTPException(status_code=401, detail={"error": "staged_preview_session_required"})
+    return token
+
+
+def _staged_preview_stats(snapshot: Dict[str, Any]) -> Dict[str, int]:
+    values = snapshot.get("playtestValues") if isinstance(snapshot.get("playtestValues"), dict) else {}
+    return {"humanity": 100, "bloodCoins": 250, **{key: value for key, value in values.items() if isinstance(key, str) and isinstance(value, int)}}
+
+
+def _staged_condition_passes(stats: Dict[str, int], condition: Dict[str, Any]) -> bool:
+    value = stats.get(condition["target"], 0)
+    return value >= condition["value"] if condition["operator"] == "gte" else value <= condition["value"] if condition["operator"] == "lte" else value == condition["value"]
+
+
+def _public_staged_preview_session(doc: Dict[str, Any]) -> Dict[str, Any]:
+    return {"sessionId": doc["sessionId"], "bookId": doc["bookId"], "releaseId": doc["releaseId"], "contentVersion": doc["contentVersion"], "sceneId": doc["sceneId"], "stats": doc["stats"], "history": doc.get("history", []), "revision": doc["revision"], "createdAt": doc["createdAt"], "updatedAt": doc["updatedAt"], "expiresAt": doc["expiresAt"], "stagingOnly": True}
+
+
+def _apply_staged_preview_choice(session: Dict[str, Any], snapshot: Dict[str, Any], scene_id: str, choice_id: str) -> Dict[str, Any]:
+    scenes = {scene.get("sceneId"): scene for scene in snapshot.get("scenes", []) if isinstance(scene, dict) and isinstance(scene.get("sceneId"), str)}
+    scene = scenes.get(scene_id)
+    if scene is None or session.get("sceneId") != scene_id:
+        raise HTTPException(status_code=409, detail={"error": "staged_preview_scene_conflict"})
+    choice = next((item for item in scene.get("choices", []) if isinstance(item, dict) and item.get("choiceId") == choice_id), None)
+    if choice is None:
+        raise HTTPException(status_code=422, detail={"error": "staged_preview_choice_not_found"})
+    conditions = choice.get("conditions", []) if isinstance(choice.get("conditions"), list) else []
+    if not all(isinstance(condition, dict) and _staged_condition_passes(session["stats"], condition) for condition in conditions):
+        raise HTTPException(status_code=409, detail={"error": "staged_preview_conditions_not_met"})
+    stats = dict(session["stats"])
+    audit = []
+    for kind in ("costs", "effects"):
+        for effect in choice.get(kind, []) if isinstance(choice.get(kind), list) else []:
+            if not isinstance(effect, dict) or not isinstance(effect.get("target"), str) or not isinstance(effect.get("delta"), int):
+                raise HTTPException(status_code=422, detail={"error": "staged_preview_invalid_effect"})
+            before = stats.get(effect["target"], 0)
+            after = before + effect["delta"]
+            stats[effect["target"]] = after
+            audit.append({"kind": "cost" if kind == "costs" else "effect", "target": effect["target"], "before": before, "delta": effect["delta"], "after": after})
+    return {"sceneId": choice.get("nextSceneId") or None, "stats": stats, "event": {"sceneId": scene_id, "choiceId": choice_id, "audit": audit, "at": _now()}}
 
 
 async def _create_release_version(draft: Dict[str, Any], user: Dict[str, Any]) -> Dict[str, Any]:
@@ -1314,6 +1371,71 @@ async def get_staged_release_preview(book_id: str):
     }
 
 
+@api.post("/staged-releases/{book_id}/sessions", status_code=201)
+async def create_staged_release_preview_session(book_id: str):
+    """Start an isolated, version-pinned staging progression session."""
+    if not STAGED_RELEASE_PREVIEW_ENABLED:
+        raise HTTPException(status_code=404, detail={"error": "staged_release_preview_disabled"})
+    release = await admin_releases.find_one({"bookId": book_id, "status": "staged"}, {"_id": 0})
+    if release is None:
+        raise HTTPException(status_code=404, detail={"error": "staged_release_not_found"})
+    snapshot = release["snapshot"]
+    scenes = [scene for scene in snapshot.get("scenes", []) if isinstance(scene, dict) and scene.get("sceneId")]
+    if not scenes:
+        raise HTTPException(status_code=422, detail={"error": "staged_release_has_no_scenes"})
+    opening = min(scenes, key=lambda scene: (int(scene.get("chapterNumber", 1)), scene["sceneId"]))["sceneId"]
+    now = _now()
+    token = secrets.token_urlsafe(32)
+    doc = {"sessionId": f"stage_{uuid.uuid4().hex}", "tokenHash": hashlib.sha256(token.encode()).hexdigest(), "releaseId": release["releaseId"], "bookId": book_id, "contentVersion": release["version"], "sceneId": opening, "stats": _staged_preview_stats(snapshot), "history": [], "revision": 1, "createdAt": now, "updatedAt": now, "expiresAt": datetime.now(timezone.utc) + timedelta(days=7)}
+    await staged_preview_sessions.insert_one(doc)
+    return {**_public_staged_preview_session(doc), "sessionToken": token}
+
+
+@api.get("/staged-preview-sessions/{session_id}")
+async def get_staged_release_preview_session(session_id: str, request: Request):
+    token = _staged_preview_session_token(request)
+    doc = await staged_preview_sessions.find_one({"sessionId": session_id, "tokenHash": hashlib.sha256(token.encode()).hexdigest()}, {"_id": 0, "tokenHash": 0})
+    if doc is None:
+        raise HTTPException(status_code=404, detail={"error": "staged_preview_session_not_found"})
+    return _public_staged_preview_session(doc)
+
+
+@api.post("/staged-preview-sessions/{session_id}/choices")
+async def choose_staged_release_preview_session(session_id: str, request: Request, payload: StagedPreviewChoiceInput):
+    token = _staged_preview_session_token(request)
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    session = await staged_preview_sessions.find_one({"sessionId": session_id, "tokenHash": token_hash}, {"_id": 0})
+    if session is None:
+        raise HTTPException(status_code=404, detail={"error": "staged_preview_session_not_found"})
+    if session["revision"] != payload.baseRevision:
+        raise HTTPException(status_code=409, detail={"error": "staged_preview_revision_conflict", "session": _public_staged_preview_session(session)})
+    release = await admin_releases.find_one({"releaseId": session["releaseId"]}, {"_id": 0, "snapshot": 1})
+    if release is None:
+        raise HTTPException(status_code=409, detail={"error": "staged_preview_release_missing"})
+    updated = _apply_staged_preview_choice(session, release["snapshot"], payload.sceneId, payload.choiceId)
+    now = _now()
+    next_session = await staged_preview_sessions.find_one_and_update({"sessionId": session_id, "tokenHash": token_hash, "revision": payload.baseRevision}, {"$set": {"sceneId": updated["sceneId"], "stats": updated["stats"], "updatedAt": now}, "$push": {"history": {"$each": [updated["event"]], "$slice": -200}}, "$inc": {"revision": 1}}, return_document=True)
+    if next_session is None:
+        raise HTTPException(status_code=409, detail={"error": "staged_preview_revision_conflict"})
+    return _public_staged_preview_session(next_session)
+
+
+@api.post("/staged-preview-sessions/{session_id}/restart")
+async def restart_staged_release_preview_session(session_id: str, request: Request):
+    token = _staged_preview_session_token(request)
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    session = await staged_preview_sessions.find_one({"sessionId": session_id, "tokenHash": token_hash}, {"_id": 0})
+    if session is None:
+        raise HTTPException(status_code=404, detail={"error": "staged_preview_session_not_found"})
+    release = await admin_releases.find_one({"releaseId": session["releaseId"]}, {"_id": 0, "snapshot": 1})
+    if release is None:
+        raise HTTPException(status_code=409, detail={"error": "staged_preview_release_missing"})
+    scenes = [scene for scene in release["snapshot"].get("scenes", []) if isinstance(scene, dict) and scene.get("sceneId")]
+    opening = min(scenes, key=lambda scene: (int(scene.get("chapterNumber", 1)), scene["sceneId"]))["sceneId"]
+    updated = await staged_preview_sessions.find_one_and_update({"sessionId": session_id, "tokenHash": token_hash}, {"$set": {"sceneId": opening, "stats": _staged_preview_stats(release["snapshot"]), "history": [], "updatedAt": _now()}, "$inc": {"revision": 1}}, return_document=True)
+    return _public_staged_preview_session(updated)
+
+
 @api.post("/admin/drafts/{draft_id}/release-versions", status_code=201)
 async def create_admin_release_version(draft_id: str, request: Request):
     """Freeze an approved draft as an immutable, private release candidate."""
@@ -1374,6 +1496,19 @@ async def stage_admin_release_version(release_id: str, request: Request):
         return_document=True,
     )
     return _public_admin_release(staged)
+
+
+@api.get("/admin/releases/{release_id}/staging-readiness")
+async def get_admin_staged_release_readiness(release_id: str, request: Request):
+    """Show staging-only activity without exposing player or production saves."""
+    user = await _current_user(request)
+    _require_admin(user)
+    release = await admin_releases.find_one({"releaseId": release_id}, {"_id": 0})
+    if release is None:
+        raise HTTPException(status_code=404, detail={"error": "release_not_found"})
+    session_count = await staged_preview_sessions.count_documents({"releaseId": release_id})
+    completed_count = await staged_preview_sessions.count_documents({"releaseId": release_id, "sceneId": None})
+    return {"releaseId": release_id, "bookId": release["bookId"], "version": release["version"], "staged": release.get("status") == "staged", "featureEnabled": STAGED_RELEASE_PREVIEW_ENABLED, "sessionCount": session_count, "completedSessionCount": completed_count, "playerSavesTouched": 0, "productionPublished": False}
 
 
 @api.post("/admin/releases/{release_id}/rollback")

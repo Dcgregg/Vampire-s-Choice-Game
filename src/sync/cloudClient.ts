@@ -101,6 +101,8 @@ export interface AdminReleaseVersion {
 }
 export type AdminReleaseSnapshot = AdminReleaseVersion & { snapshot: AdminDraft; playerFacing: false; published: false };
 export interface StagedReleasePreview { format: string; environment: 'staging-preview'; playerFacing: true; published: false; release: AdminReleaseVersion; snapshot: AdminDraft; note: string; }
+export interface StagedPreviewAudit { kind: 'cost' | 'effect'; target: string; before: number; delta: number; after: number; }
+export interface StagedPreviewSession { sessionId: string; sessionToken?: string; bookId: string; releaseId: string; contentVersion: number; sceneId: string | null; stats: Record<string, number>; history: Array<{ sceneId: string; choiceId: string; audit: StagedPreviewAudit[]; at: string }>; revision: number; createdAt: string; updatedAt: string; expiresAt: string; stagingOnly: true; }
 
 export interface AdminChoice {
   choiceId: string;
@@ -305,12 +307,40 @@ export async function stageAdminReleaseVersion(releaseId: string): Promise<Admin
   if (!r.ok) throw new Error(`stageAdminReleaseVersion failed: ${r.status}`);
   return (await r.json()) as AdminReleaseVersion;
 }
+export interface StagedReleaseReadiness { releaseId: string; bookId: string; version: number; staged: boolean; featureEnabled: boolean; sessionCount: number; completedSessionCount: number; playerSavesTouched: 0; productionPublished: false; }
+export async function getStagedReleaseReadiness(releaseId: string): Promise<StagedReleaseReadiness> {
+  const r = await fetch(`${API_BASE}/admin/releases/${releaseId}/staging-readiness`, { credentials: 'include' });
+  if (!r.ok) throw new Error(`getStagedReleaseReadiness failed: ${r.status}`);
+  return (await r.json()) as StagedReleaseReadiness;
+}
 
 export async function getStagedReleasePreview(bookId: string): Promise<StagedReleasePreview | null> {
   const r = await fetch(`${API_BASE}/staged-releases/${encodeURIComponent(bookId)}`);
   if (r.status === 404) return null;
   if (!r.ok) throw new Error(`getStagedReleasePreview failed: ${r.status}`);
   return (await r.json()) as StagedReleasePreview;
+}
+
+const stagedTokenHeaders = (sessionToken: string) => ({ 'X-Staged-Preview-Token': sessionToken, 'Content-Type': 'application/json' });
+export async function createStagedPreviewSession(bookId: string): Promise<StagedPreviewSession> {
+  const r = await fetch(`${API_BASE}/staged-releases/${encodeURIComponent(bookId)}/sessions`, { method: 'POST' });
+  if (!r.ok) throw new Error(`createStagedPreviewSession failed: ${r.status}`);
+  return (await r.json()) as StagedPreviewSession;
+}
+export async function getStagedPreviewSession(sessionId: string, sessionToken: string): Promise<StagedPreviewSession> {
+  const r = await fetch(`${API_BASE}/staged-preview-sessions/${sessionId}`, { headers: { 'X-Staged-Preview-Token': sessionToken } });
+  if (!r.ok) throw new Error(`getStagedPreviewSession failed: ${r.status}`);
+  return (await r.json()) as StagedPreviewSession;
+}
+export async function chooseStagedPreviewSession(sessionId: string, sessionToken: string, payload: { sceneId: string; choiceId: string; baseRevision: number }): Promise<StagedPreviewSession> {
+  const r = await fetch(`${API_BASE}/staged-preview-sessions/${sessionId}/choices`, { method: 'POST', headers: stagedTokenHeaders(sessionToken), body: JSON.stringify(payload) });
+  if (!r.ok) throw new Error(`chooseStagedPreviewSession failed: ${r.status}`);
+  return (await r.json()) as StagedPreviewSession;
+}
+export async function restartStagedPreviewSession(sessionId: string, sessionToken: string): Promise<StagedPreviewSession> {
+  const r = await fetch(`${API_BASE}/staged-preview-sessions/${sessionId}/restart`, { method: 'POST', headers: stagedTokenHeaders(sessionToken) });
+  if (!r.ok) throw new Error(`restartStagedPreviewSession failed: ${r.status}`);
+  return (await r.json()) as StagedPreviewSession;
 }
 
 export async function logoutApi(): Promise<void> {

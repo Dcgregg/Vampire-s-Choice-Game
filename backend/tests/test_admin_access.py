@@ -291,6 +291,25 @@ def test_staged_release_preview_flag_defaults_off(monkeypatch):
         sys.modules.pop("server", None)
 
 
+def test_staged_preview_choice_is_version_safe_and_keeps_player_saves_separate(monkeypatch):
+    monkeypatch.setenv("MONGO_URL", "mongodb://127.0.0.1:27017")
+    monkeypatch.setenv("DB_NAME", "phase30_staged_session_test")
+    import importlib
+    import sys
+    sys.modules.pop("server", None)
+    server = importlib.import_module("server")
+    try:
+        snapshot = {"scenes": [{"sceneId": "start", "chapterNumber": 1, "choices": [{"choiceId": "enter", "nextSceneId": None, "conditions": [{"target": "humanity", "operator": "gte", "value": 50}], "costs": [{"target": "bloodCoins", "delta": -10}], "effects": [{"target": "humanity", "delta": -20}]}]}]}
+        session = {"sceneId": "start", "stats": {"humanity": 100, "bloodCoins": 20}}
+        result = server._apply_staged_preview_choice(session, snapshot, "start", "enter")
+        assert result["sceneId"] is None
+        assert result["stats"] == {"humanity": 80, "bloodCoins": 10}
+        assert result["event"]["audit"][0]["delta"] == -10
+    finally:
+        server.client.close()
+        sys.modules.pop("server", None)
+
+
 def test_book_json_import_converts_engine_scenes_to_private_draft(monkeypatch):
     monkeypatch.setenv("MONGO_URL", "mongodb://127.0.0.1:27017")
     monkeypatch.setenv("DB_NAME", "phase17_json_import_test")
