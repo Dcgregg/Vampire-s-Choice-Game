@@ -141,6 +141,23 @@ def test_beta_access_allow_list_is_normalised_and_beta_sessions_reuse_choice_rul
         sys.modules.pop("server", None)
 
 
+def test_google_oauth_beta_return_path_is_same_origin_only(monkeypatch):
+    monkeypatch.setenv("MONGO_URL", "mongodb://127.0.0.1:27017")
+    monkeypatch.setenv("DB_NAME", "phase36_oauth_return_test")
+    import importlib
+    import sys
+    sys.modules.pop("server", None)
+    server = importlib.import_module("server")
+    try:
+        assert server._safe_oauth_next("/?betaBook=book6") == "/?betaBook=book6"
+        assert server._safe_oauth_next("https://example.com/?betaBook=book6") == ""
+        assert server._safe_oauth_next("/?stagedBook=book6") == ""
+        assert server._safe_oauth_next("/?betaBook=not-a-book") == ""
+    finally:
+        server.client.close()
+        sys.modules.pop("server", None)
+
+
 def test_generated_draft_normalises_common_free_model_variations(monkeypatch):
     monkeypatch.setenv("MONGO_URL", "mongodb://127.0.0.1:27017")
     monkeypatch.setenv("DB_NAME", "phase13_generation_normalisation_test")

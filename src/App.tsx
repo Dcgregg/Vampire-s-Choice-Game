@@ -24,15 +24,6 @@ import { BetaReleasePlayerScreen } from './components/screens/BetaReleasePlayerS
 
 const MainContent: React.FC = () => {
   const { activeScreen } = useGameState();
-  const stagedBook = new URLSearchParams(window.location.search).get('stagedBook');
-  const betaBook = new URLSearchParams(window.location.search).get('betaBook');
-
-  if (stagedBook && /^book[1-9][0-9]*$/.test(stagedBook)) {
-    return <div className="min-h-screen bg-[#09070c] text-[#ede5d8] font-sans selection:bg-rose-950 selection:text-rose-200"><StagedReleasePreviewScreen bookId={stagedBook} /></div>;
-  }
-  if (betaBook && /^book[1-9][0-9]*$/.test(betaBook)) {
-    return <div className="min-h-screen bg-[#09070c] text-[#ede5d8] font-sans selection:bg-rose-950 selection:text-rose-200"><BetaReleasePlayerScreen bookId={betaBook} /></div>;
-  }
 
   return (
     <div className="min-h-screen bg-[#09070c] text-[#ede5d8] flex flex-col font-sans selection:bg-rose-950 selection:text-rose-200">
@@ -63,6 +54,12 @@ const MainContent: React.FC = () => {
 };
 
 export default function App() {
+  const params = new URLSearchParams(window.location.search);
+  const stagedBook = params.get('stagedBook');
+  const betaBook = params.get('betaBook');
+  // Preview and beta must never initialise the normal game state or its cloud sync.
+  if (stagedBook && /^book[1-9][0-9]*$/.test(stagedBook)) return <div className="min-h-screen bg-[#09070c] text-[#ede5d8] font-sans"><StagedReleasePreviewScreen bookId={stagedBook} /></div>;
+  if (betaBook && /^book[1-9][0-9]*$/.test(betaBook)) return <div className="min-h-screen bg-[#09070c] text-[#ede5d8] font-sans"><BetaReleasePlayerScreen bookId={betaBook} /></div>;
   return (
     <GameStateProvider>
       <MainContent />

@@ -358,8 +358,21 @@ def _require_google_oauth_config() -> None:
         raise HTTPException(status_code=503, detail={"error": "google_oauth_not_configured"})
 
 
+def _safe_oauth_next(value: Optional[str]) -> str:
+    """Accept only a same-origin beta return path; never create an open redirect."""
+    if not value:
+        return ""
+    parsed = urllib.parse.urlparse(value)
+    if parsed.scheme or parsed.netloc or parsed.path != "/":
+        return ""
+    beta_book = urllib.parse.parse_qs(parsed.query).get("betaBook", [])
+    if len(beta_book) == 1 and re.fullmatch(r"book[1-9][0-9]*", beta_book[0]):
+        return f"/?betaBook={urllib.parse.quote(beta_book[0])}"
+    return ""
+
+
 @api.get("/auth/google/start")
-async def google_auth_start():
+async def google_auth_start(next: Optional[str] = None):
     _require_google_oauth_config()
     state = secrets.token_urlsafe(32)
     verifier = secrets.token_urlsafe(64)
@@ -377,6 +390,9 @@ async def google_auth_start():
     response = RedirectResponse(f"https://accounts.google.com/o/oauth2/v2/auth?{params}", status_code=302)
     response.set_cookie("oauth_state", state, max_age=600, httponly=True, secure=True, samesite="lax", path="/api/auth/google")
     response.set_cookie("oauth_code_verifier", verifier, max_age=600, httponly=True, secure=True, samesite="lax", path="/api/auth/google")
+    safe_next = _safe_oauth_next(next)
+    if safe_next:
+        response.set_cookie("oauth_next", safe_next, max_age=600, httponly=True, secure=True, samesite="lax", path="/api/auth/google")
     return response
 
 
@@ -435,7 +451,7 @@ async def google_auth_callback(request: Request, code: str, state: str):
         "expires_at": datetime.now(timezone.utc) + timedelta(days=SESSION_TTL_DAYS),
         "created_at": _now(),
     })
-    response = RedirectResponse(GOOGLE_OAUTH_SUCCESS_URL, status_code=303)
+    response = RedirectResponse(request.cookies.get("oauth_next") or GOOGLE_OAUTH_SUCCESS_URL, status_code=303)
     response.set_cookie(
         key=SESSION_COOKIE_NAME, value=session_token, httponly=True, secure=True,
         samesite="lax", path="/", max_age=SESSION_TTL_DAYS * 24 * 3600,
@@ -447,6 +463,7 @@ async def google_auth_callback(request: Request, code: str, state: str):
     )
     response.delete_cookie("oauth_state", path="/api/auth/google")
     response.delete_cookie("oauth_code_verifier", path="/api/auth/google")
+    response.delete_cookie("oauth_next", path="/api/auth/google")
     return response
 
 
