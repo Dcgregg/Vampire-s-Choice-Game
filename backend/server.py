@@ -1754,6 +1754,52 @@ async def export_admin_publication_handoff(release_id: str, request: Request):
     }
 
 
+@api.get("/admin/releases/{release_id}/trusted-content-compatibility")
+async def inspect_admin_trusted_content_compatibility(release_id: str, request: Request):
+    """Inspect an approved hand-off against the current trusted reducer contract.
+
+    This is deliberately a read-only report. It does not alter the bundled
+    registry or make a release playable by normal accounts.
+    """
+    user = await _current_user(request)
+    _require_admin(user)
+    release = await admin_releases.find_one({"releaseId": release_id}, {"_id": 0})
+    if release is None:
+        raise HTTPException(status_code=404, detail={"error": "release_not_found"})
+    approval = release.get("publicationApproval")
+    if not isinstance(approval, dict) or approval.get("checksum") != release["manifest"]["sha256"]:
+        raise HTTPException(status_code=409, detail={"error": "publication_review_not_approved"})
+    issues: List[Dict[str, Any]] = [{"severity": "required", "code": "narrative_bundle_conversion", "message": "Convert scene titles, bodies, dialogue, and choice text into the player narrative bundle before launch."}]
+    supported_effects = 0
+    unsupported_effects = 0
+    for scene in release["snapshot"].get("scenes", []):
+        scene_id = scene.get("sceneId", "unknown") if isinstance(scene, dict) else "unknown"
+        if not isinstance(scene, dict):
+            issues.append({"severity": "blocking", "code": "invalid_scene", "sceneId": scene_id, "message": "A release scene is not a valid object."})
+            continue
+        for choice in scene.get("choices", []):
+            if not isinstance(choice, dict):
+                issues.append({"severity": "blocking", "code": "invalid_choice", "sceneId": scene_id, "message": "A scene contains an invalid choice."})
+                continue
+            choice_id = choice.get("choiceId", "unknown")
+            if choice.get("conditions"):
+                issues.append({"severity": "blocking", "code": "conditions_need_trusted_rules", "sceneId": scene_id, "choiceId": choice_id, "message": "Private-draft conditions must be converted to trusted condition rules."})
+            if not choice.get("nextSceneId"):
+                issues.append({"severity": "blocking", "code": "terminal_route_needs_entrypoint", "sceneId": scene_id, "choiceId": choice_id, "message": "Terminal choices need a trusted terminal scene or explicit completion contract."})
+            for effect in [*(choice.get("costs") or []), *(choice.get("effects") or [])]:
+                if not isinstance(effect, dict):
+                    issues.append({"severity": "blocking", "code": "invalid_effect", "sceneId": scene_id, "choiceId": choice_id, "message": "A choice contains an invalid effect."})
+                    continue
+                target = effect.get("target", "")
+                if target == "bloodCoins" or (isinstance(target, str) and target.startswith("affinity.")):
+                    supported_effects += 1
+                else:
+                    unsupported_effects += 1
+                    issues.append({"severity": "blocking", "code": "unsupported_trusted_effect", "sceneId": scene_id, "choiceId": choice_id, "target": target, "message": f"{target or 'Unknown'} is not represented by the current trusted reducer; add a server-authoritative rule before launch."})
+    blockers = sum(1 for issue in issues if issue["severity"] == "blocking")
+    return {"format": "vampires-choice-trusted-content-compatibility/v1", "checkedAt": _now(), "releaseId": release_id, "checksum": release["manifest"]["sha256"], "summary": {"blockingIssueCount": blockers, "requiredWorkCount": len(issues) - blockers, "supportedEffectCount": supported_effects, "unsupportedEffectCount": unsupported_effects, "eligibleForTrustedConversion": blockers == 0}, "supportedMappings": {"bloodCoins": "effects.coinsChange", "affinity.<characterId>": "effects.relationshipChanges"}, "issues": issues, "publication": {"playerFacing": False, "published": False, "note": "Validation only. The trusted registry and player catalogue remain unchanged."}}
+
+
 @api.put("/admin/releases/{release_id}/beta-access")
 async def configure_admin_beta_access(release_id: str, request: Request, payload: BetaAccessUpdate):
     """Enable a selected, authenticated beta only for the supplied email list."""
