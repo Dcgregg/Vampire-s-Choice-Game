@@ -109,6 +109,7 @@ export interface StagedPreviewSession { sessionId: string; sessionToken?: string
 export interface BetaReleasePreview { format: string; environment: 'beta'; release: AdminReleaseVersion; snapshot: AdminDraft; note: string; }
 export interface BetaPlayerSession { sessionId: string; bookId: string; releaseId: string; contentVersion: number; sceneId: string | null; stats: Record<string, number>; history: Array<{ sceneId: string; choiceId: string; audit: StagedPreviewAudit[]; at: string }>; revision: number; createdAt: string; updatedAt: string; betaOnly: true; }
 export interface BetaReadiness { releaseId: string; bookId: string; version: number; enabled: boolean; featureEnabled: boolean; invitedCount: number; sessionCount: number; completedSessionCount: number; feedbackCount: number; accountSavesTouched: 0; productionPublished: false; }
+export interface BetaFeedback { feedbackId: string; sessionId: string; testerEmail: string; message: string; createdAt: string; }
 
 export interface AdminChoice {
   choiceId: string;
@@ -328,6 +329,16 @@ export async function getBetaReleaseReadiness(releaseId: string): Promise<BetaRe
   const r = await fetch(`${API_BASE}/admin/releases/${releaseId}/beta-readiness`, { credentials: 'include' });
   if (!r.ok) throw new Error(`getBetaReleaseReadiness failed: ${r.status}`);
   return (await r.json()) as BetaReadiness;
+}
+export async function getBetaReleaseAccess(releaseId: string): Promise<string[]> {
+  const r = await fetch(`${API_BASE}/admin/releases/${releaseId}/beta-access`, { credentials: 'include' });
+  if (!r.ok) throw new Error(`getBetaReleaseAccess failed: ${r.status}`);
+  return ((await r.json()) as { emails: string[] }).emails;
+}
+export async function getBetaReleaseFeedback(releaseId: string): Promise<BetaFeedback[]> {
+  const r = await fetch(`${API_BASE}/admin/releases/${releaseId}/beta-feedback`, { credentials: 'include' });
+  if (!r.ok) throw new Error(`getBetaReleaseFeedback failed: ${r.status}`);
+  return ((await r.json()) as { feedback: BetaFeedback[] }).feedback;
 }
 
 export async function getStagedReleasePreview(bookId: string): Promise<StagedReleasePreview | null> {

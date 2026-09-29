@@ -1592,6 +1592,30 @@ async def get_admin_beta_readiness(release_id: str, request: Request):
     return {"releaseId": release_id, "bookId": release["bookId"], "version": release["version"], "enabled": bool(release.get("betaEnabled")), "featureEnabled": BETA_RELEASES_ENABLED, "invitedCount": invited, "sessionCount": sessions_count, "completedSessionCount": completed, "feedbackCount": feedback_count, "accountSavesTouched": 0, "productionPublished": False}
 
 
+@api.get("/admin/releases/{release_id}/beta-access")
+async def get_admin_beta_access(release_id: str, request: Request):
+    """Return the saved allow-list to an administrator only."""
+    user = await _current_user(request)
+    _require_admin(user)
+    release = await admin_releases.find_one({"releaseId": release_id}, {"_id": 0, "releaseId": 1})
+    if release is None:
+        raise HTTPException(status_code=404, detail={"error": "release_not_found"})
+    access = await beta_release_access.find({"releaseId": release_id}, {"_id": 0, "email": 1}).sort("email", 1).to_list(length=100)
+    return {"releaseId": release_id, "emails": [item["email"] for item in access]}
+
+
+@api.get("/admin/releases/{release_id}/beta-feedback")
+async def get_admin_beta_feedback(release_id: str, request: Request):
+    """Review beta feedback without exposing account-save or user-id records."""
+    user = await _current_user(request)
+    _require_admin(user)
+    release = await admin_releases.find_one({"releaseId": release_id}, {"_id": 0, "releaseId": 1})
+    if release is None:
+        raise HTTPException(status_code=404, detail={"error": "release_not_found"})
+    docs = await beta_feedback.find({"releaseId": release_id}, {"_id": 0, "feedbackId": 1, "sessionId": 1, "testerEmail": 1, "message": 1, "createdAt": 1}).sort("createdAt", -1).to_list(length=200)
+    return {"releaseId": release_id, "feedback": [{"feedbackId": item["feedbackId"], "sessionId": item["sessionId"], "testerEmail": item.get("testerEmail", "Tester"), "message": item["message"], "createdAt": item["createdAt"]} for item in docs]}
+
+
 @api.put("/admin/releases/{release_id}/beta-access")
 async def configure_admin_beta_access(release_id: str, request: Request, payload: BetaAccessUpdate):
     """Enable a selected, authenticated beta only for the supplied email list."""
@@ -1679,7 +1703,7 @@ async def submit_beta_feedback(session_id: str, request: Request, payload: BetaF
     if session is None:
         raise HTTPException(status_code=404, detail={"error": "beta_session_not_found"})
     await _beta_release_for_user(session["bookId"], user)
-    await beta_feedback.insert_one({"feedbackId": f"feedback_{uuid.uuid4().hex}", "releaseId": session["releaseId"], "sessionId": session_id, "userId": user["user_id"], "message": payload.message.strip(), "createdAt": _now()})
+    await beta_feedback.insert_one({"feedbackId": f"feedback_{uuid.uuid4().hex}", "releaseId": session["releaseId"], "sessionId": session_id, "userId": user["user_id"], "testerEmail": user["email"], "message": payload.message.strip(), "createdAt": _now()})
     return {"ok": True}
 
 
