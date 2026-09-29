@@ -102,6 +102,7 @@ export interface AdminReleaseVersion {
   betaEnabledAt?: string | null;
   betaEnabledBy?: string | null;
   betaDecision?: BetaDecision | null;
+  betaDecisionHistory?: BetaDecision[];
 }
 export type AdminReleaseSnapshot = AdminReleaseVersion & { snapshot: AdminDraft; playerFacing: false; published: false };
 export interface StagedReleasePreview { format: string; environment: 'staging-preview'; playerFacing: true; published: false; release: AdminReleaseVersion; snapshot: AdminDraft; note: string; }

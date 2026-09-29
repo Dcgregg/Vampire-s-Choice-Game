@@ -997,6 +997,7 @@ def _public_admin_release(doc: Dict[str, Any]) -> Dict[str, Any]:
         "betaEnabledAt": doc.get("betaEnabledAt"),
         "betaEnabledBy": doc.get("betaEnabledBy"),
         "betaDecision": doc.get("betaDecision"),
+        "betaDecisionHistory": doc.get("betaDecisionHistory", []),
     }
 
 
@@ -1692,7 +1693,7 @@ async def record_admin_beta_decision(release_id: str, request: Request, payload:
     if payload.decision == "ready_for_release_review" and open_count:
         raise HTTPException(status_code=409, detail={"error": "beta_feedback_open", "openFeedbackCount": open_count})
     decision = {"decision": payload.decision, "note": payload.note.strip(), "decidedAt": _now(), "decidedBy": user["email"], "openFeedbackCount": open_count, "playerFacing": False, "published": False}
-    await admin_releases.update_one({"releaseId": release_id}, {"$set": {"betaDecision": decision}})
+    await admin_releases.update_one({"releaseId": release_id}, {"$set": {"betaDecision": decision}, "$push": {"betaDecisionHistory": {"$each": [decision], "$slice": -20}}})
     return {"releaseId": release_id, "decision": decision, "productionPublished": False}
 
 
