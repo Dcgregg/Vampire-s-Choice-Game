@@ -175,8 +175,8 @@ export const AccountBar: React.FC = () => {
             className="flex items-center gap-1.5 rounded-full border border-[#c5a059]/50 bg-[#160e20]/80 px-2.5 py-1 text-[11px] font-semibold text-[#e5c158] backdrop-blur-sm transition-colors hover:bg-[#22142e]"
           >
             <LogOut className="h-3 w-3" />
-            <span className="hidden lg:inline">{user.email}</span>
-            <span className="hidden sm:inline">Sign out</span>
+            <span className="max-w-32 truncate">{user.email}</span>
+            <span className="hidden xl:inline">Sign out</span>
           </button>
           </>
         ) : (
