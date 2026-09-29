@@ -117,6 +117,7 @@ export interface PublicationApproval { checksum: string; version: number; note: 
 export interface BetaReadiness { releaseId: string; bookId: string; version: number; enabled: boolean; featureEnabled: boolean; invitedCount: number; sessionCount: number; completedSessionCount: number; feedbackCount: number; openFeedbackCount: number; resolvedFeedbackCount: number; readyForDecision: boolean; decision?: BetaDecision | null; accountSavesTouched: 0; productionPublished: false; }
 export interface BetaFeedback { feedbackId: string; sessionId: string; testerEmail: string; message: string; createdAt: string; status: 'open' | 'resolved'; adminNote: string; resolvedAt?: string | null; resolvedBy?: string | null; }
 export interface BetaReport { format: 'vampires-choice-private-beta-report/v1'; exportedAt: string; release: AdminReleaseVersion; summary: { enabled: boolean; invitedCount: number; sessionCount: number; completedSessionCount: number; feedbackCount: number; openFeedbackCount: number; resolvedFeedbackCount: number; readyForReleaseReview: boolean; decision?: BetaDecision | null; }; feedback: Array<Omit<BetaFeedback, 'sessionId' | 'resolvedBy'>>; publication: { playerFacing: false; published: false; note: string; }; }
+export interface PublicationHandoff { format: 'vampires-choice-controlled-publication-handoff/v1'; exportedAt: string; release: AdminReleaseVersion; snapshot: AdminDraft; compatibility: { sourceFormat: string; targetFormat: string; requiresTrustedContentConversion: true; checksum: string; note: string; }; publication: { playerFacing: false; published: false; note: string; }; }
 
 export interface AdminChoice {
   choiceId: string;
@@ -366,6 +367,11 @@ export async function approveReleasePublicationReview(releaseId: string, input: 
   const r = await fetch(`${API_BASE}/admin/releases/${releaseId}/publication-approval`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
   if (!r.ok) throw new Error(`approveReleasePublicationReview failed: ${r.status}`);
   return (await r.json()) as { releaseId: string; approval: PublicationApproval; productionPublished: false };
+}
+export async function getReleasePublicationHandoff(releaseId: string): Promise<PublicationHandoff> {
+  const r = await fetch(`${API_BASE}/admin/releases/${releaseId}/publication-handoff`, { credentials: 'include' });
+  if (!r.ok) throw new Error(`getReleasePublicationHandoff failed: ${r.status}`);
+  return (await r.json()) as PublicationHandoff;
 }
 
 export async function getStagedReleasePreview(bookId: string): Promise<StagedReleasePreview | null> {

@@ -1727,6 +1727,33 @@ async def approve_admin_publication_review(release_id: str, request: Request, pa
     return {"releaseId": release_id, "approval": approval, "productionPublished": False}
 
 
+@api.get("/admin/releases/{release_id}/publication-handoff")
+async def export_admin_publication_handoff(release_id: str, request: Request):
+    """Export the approved immutable snapshot for a separately authorised engine integration."""
+    user = await _current_user(request)
+    _require_admin(user)
+    release = await admin_releases.find_one({"releaseId": release_id}, {"_id": 0})
+    if release is None:
+        raise HTTPException(status_code=404, detail={"error": "release_not_found"})
+    approval = release.get("publicationApproval")
+    if not isinstance(approval, dict) or approval.get("checksum") != release["manifest"]["sha256"]:
+        raise HTTPException(status_code=409, detail={"error": "publication_review_not_approved"})
+    return {
+        "format": "vampires-choice-controlled-publication-handoff/v1",
+        "exportedAt": _now(),
+        "release": _public_admin_release(release),
+        "snapshot": release["snapshot"],
+        "compatibility": {
+            "sourceFormat": "vampires-choice-admin-release/v1",
+            "targetFormat": "vampires-choice-trusted-content-registry/v1",
+            "requiresTrustedContentConversion": True,
+            "checksum": release["manifest"]["sha256"],
+            "note": "A separately authorised deployment must validate and convert this snapshot before adding it to the trusted player-content registry.",
+        },
+        "publication": {"playerFacing": False, "published": False, "note": "This hand-off is a controlled release artifact only. Downloading it cannot publish or modify player content."},
+    }
+
+
 @api.put("/admin/releases/{release_id}/beta-access")
 async def configure_admin_beta_access(release_id: str, request: Request, payload: BetaAccessUpdate):
     """Enable a selected, authenticated beta only for the supplied email list."""
