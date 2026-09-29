@@ -1633,6 +1633,31 @@ async def get_admin_beta_feedback(release_id: str, request: Request):
     return {"releaseId": release_id, "feedback": [{"feedbackId": item["feedbackId"], "sessionId": item["sessionId"], "testerEmail": item.get("testerEmail", "Tester"), "message": item["message"], "createdAt": item["createdAt"], "status": item.get("status", "open"), "adminNote": item.get("adminNote", ""), "resolvedAt": item.get("resolvedAt"), "resolvedBy": item.get("resolvedBy")} for item in docs]}
 
 
+@api.get("/admin/releases/{release_id}/beta-report")
+async def export_admin_beta_report(release_id: str, request: Request):
+    """A private, portable beta-review hand-off. It cannot promote content."""
+    user = await _current_user(request)
+    _require_admin(user)
+    release = await admin_releases.find_one({"releaseId": release_id}, {"_id": 0, "snapshot": 0})
+    if release is None:
+        raise HTTPException(status_code=404, detail={"error": "release_not_found"})
+    invited_count = await beta_release_access.count_documents({"releaseId": release_id})
+    session_count = await beta_player_sessions.count_documents({"releaseId": release_id})
+    completed_count = await beta_player_sessions.count_documents({"releaseId": release_id, "sceneId": None})
+    feedback_docs = await beta_feedback.find({"releaseId": release_id}, {"_id": 0, "feedbackId": 1, "testerEmail": 1, "message": 1, "createdAt": 1, "status": 1, "adminNote": 1, "resolvedAt": 1}).sort("createdAt", -1).to_list(length=200)
+    feedback_items = [{"feedbackId": item["feedbackId"], "testerEmail": item.get("testerEmail", "Tester"), "message": item["message"], "createdAt": item["createdAt"], "status": item.get("status", "open"), "adminNote": item.get("adminNote", ""), "resolvedAt": item.get("resolvedAt")} for item in feedback_docs]
+    resolved_count = sum(1 for item in feedback_items if item["status"] == "resolved")
+    open_count = len(feedback_items) - resolved_count
+    return {
+        "format": "vampires-choice-private-beta-report/v1",
+        "exportedAt": _now(),
+        "release": _public_admin_release(release),
+        "summary": {"enabled": bool(release.get("betaEnabled")), "invitedCount": invited_count, "sessionCount": session_count, "completedSessionCount": completed_count, "feedbackCount": len(feedback_items), "openFeedbackCount": open_count, "resolvedFeedbackCount": resolved_count, "readyForReleaseReview": bool(release.get("betaEnabled")) and session_count > 0 and open_count == 0, "decision": release.get("betaDecision")},
+        "feedback": feedback_items,
+        "publication": {"playerFacing": False, "published": False, "note": "This report records private beta evidence only. It cannot publish or change player content."},
+    }
+
+
 @api.patch("/admin/releases/{release_id}/beta-feedback/{feedback_id}")
 async def triage_admin_beta_feedback(release_id: str, feedback_id: str, request: Request, payload: BetaFeedbackTriageInput):
     user = await _current_user(request)

@@ -112,6 +112,7 @@ export interface BetaPlayerSession { sessionId: string; bookId: string; releaseI
 export interface BetaDecision { decision: 'continue_testing' | 'ready_for_release_review'; note: string; decidedAt: string; decidedBy: string; openFeedbackCount: number; playerFacing: false; published: false; }
 export interface BetaReadiness { releaseId: string; bookId: string; version: number; enabled: boolean; featureEnabled: boolean; invitedCount: number; sessionCount: number; completedSessionCount: number; feedbackCount: number; openFeedbackCount: number; resolvedFeedbackCount: number; readyForDecision: boolean; decision?: BetaDecision | null; accountSavesTouched: 0; productionPublished: false; }
 export interface BetaFeedback { feedbackId: string; sessionId: string; testerEmail: string; message: string; createdAt: string; status: 'open' | 'resolved'; adminNote: string; resolvedAt?: string | null; resolvedBy?: string | null; }
+export interface BetaReport { format: 'vampires-choice-private-beta-report/v1'; exportedAt: string; release: AdminReleaseVersion; summary: { enabled: boolean; invitedCount: number; sessionCount: number; completedSessionCount: number; feedbackCount: number; openFeedbackCount: number; resolvedFeedbackCount: number; readyForReleaseReview: boolean; decision?: BetaDecision | null; }; feedback: Array<Omit<BetaFeedback, 'sessionId' | 'resolvedBy'>>; publication: { playerFacing: false; published: false; note: string; }; }
 
 export interface AdminChoice {
   choiceId: string;
@@ -341,6 +342,11 @@ export async function getBetaReleaseFeedback(releaseId: string): Promise<BetaFee
   const r = await fetch(`${API_BASE}/admin/releases/${releaseId}/beta-feedback`, { credentials: 'include' });
   if (!r.ok) throw new Error(`getBetaReleaseFeedback failed: ${r.status}`);
   return ((await r.json()) as { feedback: BetaFeedback[] }).feedback;
+}
+export async function getBetaReleaseReport(releaseId: string): Promise<BetaReport> {
+  const r = await fetch(`${API_BASE}/admin/releases/${releaseId}/beta-report`, { credentials: 'include' });
+  if (!r.ok) throw new Error(`getBetaReleaseReport failed: ${r.status}`);
+  return (await r.json()) as BetaReport;
 }
 export async function triageBetaReleaseFeedback(releaseId: string, feedbackId: string, input: Pick<BetaFeedback, 'status' | 'adminNote'>): Promise<BetaFeedback> {
   const r = await fetch(`${API_BASE}/admin/releases/${releaseId}/beta-feedback/${feedbackId}`, { method: 'PATCH', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
