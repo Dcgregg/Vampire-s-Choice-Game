@@ -18,11 +18,14 @@ interface AuthState {
   conflict: ClaimConflict | null;
   error: LinkError | null;
   resolving: boolean;
+  migrationRequired: boolean;
   login: () => void;
   logout: () => Promise<void>;
   resolveConflict: (strategy: 'use_account' | 'use_anonymous') => Promise<void>;
   retryLink: () => Promise<void>;
   dismissError: () => void;
+  importLocalProgress: () => Promise<void>;
+  startFreshAccount: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -38,6 +41,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [conflict, setConflict] = useState<ClaimConflict | null>(null);
   const [error, setError] = useState<LinkError | null>(null);
   const [resolving, setResolving] = useState(false);
+  const [migrationRequired, setMigrationRequired] = useState(false);
   const processed = useRef(false);
 
   const activateTrustedProgression = useCallback(async (account: PublicUser) => {
@@ -50,20 +54,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, []);
 
-  const linkProgress = useCallback(async (account: PublicUser) => {
+  const importLocalProgress = useCallback(async () => {
+    if (!user || resolving) return;
     const playerId = syncManager.getPlayerId();
     let res;
+    setResolving(true);
     try {
       res = await claimSave(playerId);
     } catch {
-      // Backend unreachable: stay anonymous, keep local progress, surface the error.
+      setResolving(false);
       setError('link_failed');
       return;
     }
+    setResolving(false);
     if (res.ok) {
       setError(null);
+      setMigrationRequired(false);
       syncManager.enterAccountMode(res.save);
-      await activateTrustedProgression(account);
+      await activateTrustedProgression(user);
       return;
     }
     if ('conflict' in res && res.conflict) {
@@ -71,16 +79,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setConflict({ accountSave: res.accountSave, anonymousSave: res.anonymousSave, playerId });
       return;
     }
-    // Genuinely nothing to claim (new signed-in user) -> start a fresh account save from local.
-    if (res.error === 'nothing_to_claim' || res.error === 'http_404') {
-      const acct = await getAccountSave().catch(() => null);
-      setError(null);
-      syncManager.enterAccountMode(acct);
-      await activateTrustedProgression(account);
-      return;
-    }
-    // Any other failure: DO NOT treat as a successful link. Remain anonymous.
     setError('link_failed');
+  }, [activateTrustedProgression, resolving, user]);
+
+  const startFreshAccount = useCallback(async () => {
+    if (!user || resolving) return;
+    setResolving(true);
+    // Switch persistence first, then clear only this browser's local copy.
+    // The prior account's cloud save remains untouched and will load on sign-in.
+    syncManager.enterAccountMode(null);
+    gameStateManager.resetAllData();
+    setMigrationRequired(false);
+    setError(null);
+    await activateTrustedProgression(user);
+    setResolving(false);
+  }, [activateTrustedProgression, resolving, user]);
+
+  const loadAccount = useCallback(async (account: PublicUser) => {
+    try {
+      const accountSave = await getAccountSave();
+      if (accountSave) {
+        syncManager.enterAccountMode(accountSave);
+        await activateTrustedProgression(account);
+        return;
+      }
+      // A new account must never silently inherit the active browser's story.
+      if (gameStateManager.getState().player) setMigrationRequired(true);
+      else {
+        syncManager.enterAccountMode(null);
+        await activateTrustedProgression(account);
+      }
+    } catch {
+      setError('link_failed');
+    }
   }, [activateTrustedProgression]);
 
   const resolveConflict = useCallback(async (strategy: 'use_account' | 'use_anonymous') => {
@@ -99,6 +130,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (res.ok) {
       setError(null);
       setConflict(null);
+      setMigrationRequired(false);
       syncManager.enterAccountMode(res.save);
       if (user) await activateTrustedProgression(user);
       return;
@@ -109,8 +141,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const retryLink = useCallback(async () => {
     setError(null);
-    if (user) await linkProgress(user);
-  }, [linkProgress, user]);
+    if (user && migrationRequired) await importLocalProgress();
+    else if (user) await loadAccount(user);
+  }, [importLocalProgress, loadAccount, migrationRequired, user]);
 
   const dismissError = useCallback(() => setError(null), []);
 
@@ -119,11 +152,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     processed.current = true;
     const run = async () => {
       const me = await getMe();
-      if (me) { setUser(me); await linkProgress(me); }
+      if (me) { setUser(me); await loadAccount(me); }
       setLoading(false);
     };
     void run();
-  }, [linkProgress]);
+  }, [loadAccount]);
 
   const login = useCallback(() => {
     window.location.href = '/api/auth/google/start';
@@ -136,13 +169,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(null);
     setError(null);
     setConflict(null);
+    setMigrationRequired(false);
   }, []);
 
   // Touch gameStateManager so the singleton (and its sync attach) is initialised.
   useEffect(() => { void gameStateManager.getState(); }, []);
 
   return (
-    <AuthContext.Provider value={{ user, loading, conflict, error, resolving, login, logout, resolveConflict, retryLink, dismissError }}>
+    <AuthContext.Provider value={{ user, loading, conflict, error, resolving, migrationRequired, login, logout, resolveConflict, retryLink, dismissError, importLocalProgress, startFreshAccount }}>
       {children}
     </AuthContext.Provider>
   );
