@@ -101,6 +101,7 @@ export interface AdminReleaseVersion {
   betaEnabled?: boolean;
   betaEnabledAt?: string | null;
   betaEnabledBy?: string | null;
+  betaDecision?: BetaDecision | null;
 }
 export type AdminReleaseSnapshot = AdminReleaseVersion & { snapshot: AdminDraft; playerFacing: false; published: false };
 export interface StagedReleasePreview { format: string; environment: 'staging-preview'; playerFacing: true; published: false; release: AdminReleaseVersion; snapshot: AdminDraft; note: string; }
@@ -108,8 +109,9 @@ export interface StagedPreviewAudit { kind: 'cost' | 'effect'; target: string; b
 export interface StagedPreviewSession { sessionId: string; sessionToken?: string; bookId: string; releaseId: string; contentVersion: number; sceneId: string | null; stats: Record<string, number>; history: Array<{ sceneId: string; choiceId: string; audit: StagedPreviewAudit[]; at: string }>; revision: number; createdAt: string; updatedAt: string; expiresAt: string; stagingOnly: true; }
 export interface BetaReleasePreview { format: string; environment: 'beta'; release: AdminReleaseVersion; snapshot: AdminDraft; note: string; }
 export interface BetaPlayerSession { sessionId: string; bookId: string; releaseId: string; contentVersion: number; sceneId: string | null; stats: Record<string, number>; history: Array<{ sceneId: string; choiceId: string; audit: StagedPreviewAudit[]; at: string }>; revision: number; createdAt: string; updatedAt: string; betaOnly: true; }
-export interface BetaReadiness { releaseId: string; bookId: string; version: number; enabled: boolean; featureEnabled: boolean; invitedCount: number; sessionCount: number; completedSessionCount: number; feedbackCount: number; accountSavesTouched: 0; productionPublished: false; }
-export interface BetaFeedback { feedbackId: string; sessionId: string; testerEmail: string; message: string; createdAt: string; }
+export interface BetaDecision { decision: 'continue_testing' | 'ready_for_release_review'; note: string; decidedAt: string; decidedBy: string; openFeedbackCount: number; playerFacing: false; published: false; }
+export interface BetaReadiness { releaseId: string; bookId: string; version: number; enabled: boolean; featureEnabled: boolean; invitedCount: number; sessionCount: number; completedSessionCount: number; feedbackCount: number; openFeedbackCount: number; resolvedFeedbackCount: number; readyForDecision: boolean; decision?: BetaDecision | null; accountSavesTouched: 0; productionPublished: false; }
+export interface BetaFeedback { feedbackId: string; sessionId: string; testerEmail: string; message: string; createdAt: string; status: 'open' | 'resolved'; adminNote: string; resolvedAt?: string | null; resolvedBy?: string | null; }
 
 export interface AdminChoice {
   choiceId: string;
@@ -339,6 +341,16 @@ export async function getBetaReleaseFeedback(releaseId: string): Promise<BetaFee
   const r = await fetch(`${API_BASE}/admin/releases/${releaseId}/beta-feedback`, { credentials: 'include' });
   if (!r.ok) throw new Error(`getBetaReleaseFeedback failed: ${r.status}`);
   return ((await r.json()) as { feedback: BetaFeedback[] }).feedback;
+}
+export async function triageBetaReleaseFeedback(releaseId: string, feedbackId: string, input: Pick<BetaFeedback, 'status' | 'adminNote'>): Promise<BetaFeedback> {
+  const r = await fetch(`${API_BASE}/admin/releases/${releaseId}/beta-feedback/${feedbackId}`, { method: 'PATCH', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
+  if (!r.ok) throw new Error(`triageBetaReleaseFeedback failed: ${r.status}`);
+  return (await r.json()) as BetaFeedback;
+}
+export async function recordBetaReleaseDecision(releaseId: string, input: Pick<BetaDecision, 'decision' | 'note'>): Promise<{ releaseId: string; decision: BetaDecision; productionPublished: false }> {
+  const r = await fetch(`${API_BASE}/admin/releases/${releaseId}/beta-decision`, { method: 'PUT', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) });
+  if (!r.ok) throw new Error(`recordBetaReleaseDecision failed: ${r.status}`);
+  return (await r.json()) as { releaseId: string; decision: BetaDecision; productionPublished: false };
 }
 
 export async function getStagedReleasePreview(bookId: string): Promise<StagedReleasePreview | null> {

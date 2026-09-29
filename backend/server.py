@@ -642,6 +642,20 @@ class BetaFeedbackInput(BaseModel):
     message: str = Field(min_length=3, max_length=2000)
 
 
+class BetaFeedbackTriageInput(BaseModel):
+    """An admin-only review state; beta reports never alter player content."""
+    model_config = ConfigDict(extra="forbid")
+    status: Literal["open", "resolved"]
+    adminNote: str = Field(default="", max_length=2000)
+
+
+class BetaDecisionInput(BaseModel):
+    """A private human release-review record, not a publishing instruction."""
+    model_config = ConfigDict(extra="forbid")
+    decision: Literal["continue_testing", "ready_for_release_review"]
+    note: str = Field(default="", max_length=2000)
+
+
 class AdminGeneratedDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
     title: str = Field(min_length=1, max_length=160)
@@ -982,6 +996,7 @@ def _public_admin_release(doc: Dict[str, Any]) -> Dict[str, Any]:
         "betaEnabled": bool(doc.get("betaEnabled")),
         "betaEnabledAt": doc.get("betaEnabledAt"),
         "betaEnabledBy": doc.get("betaEnabledBy"),
+        "betaDecision": doc.get("betaDecision"),
     }
 
 
@@ -1589,7 +1604,9 @@ async def get_admin_beta_readiness(release_id: str, request: Request):
     sessions_count = await beta_player_sessions.count_documents({"releaseId": release_id})
     completed = await beta_player_sessions.count_documents({"releaseId": release_id, "sceneId": None})
     feedback_count = await beta_feedback.count_documents({"releaseId": release_id})
-    return {"releaseId": release_id, "bookId": release["bookId"], "version": release["version"], "enabled": bool(release.get("betaEnabled")), "featureEnabled": BETA_RELEASES_ENABLED, "invitedCount": invited, "sessionCount": sessions_count, "completedSessionCount": completed, "feedbackCount": feedback_count, "accountSavesTouched": 0, "productionPublished": False}
+    resolved_count = await beta_feedback.count_documents({"releaseId": release_id, "status": "resolved"})
+    open_count = feedback_count - resolved_count
+    return {"releaseId": release_id, "bookId": release["bookId"], "version": release["version"], "enabled": bool(release.get("betaEnabled")), "featureEnabled": BETA_RELEASES_ENABLED, "invitedCount": invited, "sessionCount": sessions_count, "completedSessionCount": completed, "feedbackCount": feedback_count, "openFeedbackCount": open_count, "resolvedFeedbackCount": resolved_count, "readyForDecision": bool(release.get("betaEnabled")) and sessions_count > 0 and open_count == 0, "decision": release.get("betaDecision"), "accountSavesTouched": 0, "productionPublished": False}
 
 
 @api.get("/admin/releases/{release_id}/beta-access")
@@ -1612,8 +1629,46 @@ async def get_admin_beta_feedback(release_id: str, request: Request):
     release = await admin_releases.find_one({"releaseId": release_id}, {"_id": 0, "releaseId": 1})
     if release is None:
         raise HTTPException(status_code=404, detail={"error": "release_not_found"})
-    docs = await beta_feedback.find({"releaseId": release_id}, {"_id": 0, "feedbackId": 1, "sessionId": 1, "testerEmail": 1, "message": 1, "createdAt": 1}).sort("createdAt", -1).to_list(length=200)
-    return {"releaseId": release_id, "feedback": [{"feedbackId": item["feedbackId"], "sessionId": item["sessionId"], "testerEmail": item.get("testerEmail", "Tester"), "message": item["message"], "createdAt": item["createdAt"]} for item in docs]}
+    docs = await beta_feedback.find({"releaseId": release_id}, {"_id": 0, "feedbackId": 1, "sessionId": 1, "testerEmail": 1, "message": 1, "createdAt": 1, "status": 1, "adminNote": 1, "resolvedAt": 1, "resolvedBy": 1}).sort("createdAt", -1).to_list(length=200)
+    return {"releaseId": release_id, "feedback": [{"feedbackId": item["feedbackId"], "sessionId": item["sessionId"], "testerEmail": item.get("testerEmail", "Tester"), "message": item["message"], "createdAt": item["createdAt"], "status": item.get("status", "open"), "adminNote": item.get("adminNote", ""), "resolvedAt": item.get("resolvedAt"), "resolvedBy": item.get("resolvedBy")} for item in docs]}
+
+
+@api.patch("/admin/releases/{release_id}/beta-feedback/{feedback_id}")
+async def triage_admin_beta_feedback(release_id: str, feedback_id: str, request: Request, payload: BetaFeedbackTriageInput):
+    user = await _current_user(request)
+    _require_admin(user)
+    if not re.fullmatch(r"release_[A-Za-z0-9]+", release_id) or not re.fullmatch(r"feedback_[A-Za-z0-9]+", feedback_id):
+        raise HTTPException(status_code=404, detail={"error": "beta_feedback_not_found"})
+    feedback = await beta_feedback.find_one({"releaseId": release_id, "feedbackId": feedback_id}, {"_id": 0})
+    if feedback is None:
+        raise HTTPException(status_code=404, detail={"error": "beta_feedback_not_found"})
+    now = _now()
+    changes = {"status": payload.status, "adminNote": payload.adminNote.strip(), "reviewedAt": now, "reviewedBy": user["email"]}
+    if payload.status == "resolved":
+        changes.update({"resolvedAt": now, "resolvedBy": user["email"]})
+        unset = {}
+    else:
+        unset = {"resolvedAt": "", "resolvedBy": ""}
+    updated = await beta_feedback.find_one_and_update({"releaseId": release_id, "feedbackId": feedback_id}, {"$set": changes, "$unset": unset}, return_document=True)
+    return {"feedbackId": updated["feedbackId"], "sessionId": updated["sessionId"], "testerEmail": updated.get("testerEmail", "Tester"), "message": updated["message"], "createdAt": updated["createdAt"], "status": updated.get("status", "open"), "adminNote": updated.get("adminNote", ""), "resolvedAt": updated.get("resolvedAt"), "resolvedBy": updated.get("resolvedBy")}
+
+
+@api.put("/admin/releases/{release_id}/beta-decision")
+async def record_admin_beta_decision(release_id: str, request: Request, payload: BetaDecisionInput):
+    """Record a private release-review decision. This endpoint never publishes."""
+    user = await _current_user(request)
+    _require_admin(user)
+    release = await admin_releases.find_one({"releaseId": release_id}, {"_id": 0})
+    if release is None:
+        raise HTTPException(status_code=404, detail={"error": "release_not_found"})
+    if release.get("status") != "staged" or not release.get("betaEnabled"):
+        raise HTTPException(status_code=409, detail={"error": "beta_release_not_active"})
+    open_count = await beta_feedback.count_documents({"releaseId": release_id, "status": {"$ne": "resolved"}})
+    if payload.decision == "ready_for_release_review" and open_count:
+        raise HTTPException(status_code=409, detail={"error": "beta_feedback_open", "openFeedbackCount": open_count})
+    decision = {"decision": payload.decision, "note": payload.note.strip(), "decidedAt": _now(), "decidedBy": user["email"], "openFeedbackCount": open_count, "playerFacing": False, "published": False}
+    await admin_releases.update_one({"releaseId": release_id}, {"$set": {"betaDecision": decision}})
+    return {"releaseId": release_id, "decision": decision, "productionPublished": False}
 
 
 @api.put("/admin/releases/{release_id}/beta-access")
@@ -1630,12 +1685,12 @@ async def configure_admin_beta_access(release_id: str, request: Request, payload
         raise HTTPException(status_code=409, detail={"error": "beta_release_not_staged"})
     if not payload.emails:
         await beta_release_access.delete_many({"releaseId": release_id})
-        await admin_releases.update_one({"releaseId": release_id}, {"$set": {"betaEnabled": False, "betaDisabledAt": _now(), "betaDisabledBy": user["email"]}})
+        await admin_releases.update_one({"releaseId": release_id}, {"$set": {"betaEnabled": False, "betaDisabledAt": _now(), "betaDisabledBy": user["email"]}, "$unset": {"betaDecision": ""}})
         return {"releaseId": release_id, "enabled": False, "invitedCount": 0, "playerFacing": False, "productionPublished": False}
     await beta_release_access.delete_many({"releaseId": release_id})
     now = _now()
     await beta_release_access.insert_many([{"releaseId": release_id, "email": email, "createdAt": now, "createdBy": user["email"]} for email in payload.emails])
-    await admin_releases.update_one({"releaseId": release_id}, {"$set": {"betaEnabled": True, "betaEnabledAt": now, "betaEnabledBy": user["email"]}, "$unset": {"betaDisabledAt": "", "betaDisabledBy": ""}})
+    await admin_releases.update_one({"releaseId": release_id}, {"$set": {"betaEnabled": True, "betaEnabledAt": now, "betaEnabledBy": user["email"]}, "$unset": {"betaDisabledAt": "", "betaDisabledBy": "", "betaDecision": ""}})
     return {"releaseId": release_id, "enabled": True, "invitedCount": len(payload.emails), "playerFacing": True, "productionPublished": False}
 
 
@@ -1703,7 +1758,8 @@ async def submit_beta_feedback(session_id: str, request: Request, payload: BetaF
     if session is None:
         raise HTTPException(status_code=404, detail={"error": "beta_session_not_found"})
     await _beta_release_for_user(session["bookId"], user)
-    await beta_feedback.insert_one({"feedbackId": f"feedback_{uuid.uuid4().hex}", "releaseId": session["releaseId"], "sessionId": session_id, "userId": user["user_id"], "testerEmail": user["email"], "message": payload.message.strip(), "createdAt": _now()})
+    await beta_feedback.insert_one({"feedbackId": f"feedback_{uuid.uuid4().hex}", "releaseId": session["releaseId"], "sessionId": session_id, "userId": user["user_id"], "testerEmail": user["email"], "message": payload.message.strip(), "status": "open", "adminNote": "", "createdAt": _now()})
+    await admin_releases.update_one({"releaseId": session["releaseId"]}, {"$unset": {"betaDecision": ""}})
     return {"ok": True}
 
 
