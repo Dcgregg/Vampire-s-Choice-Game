@@ -656,6 +656,13 @@ class BetaDecisionInput(BaseModel):
     note: str = Field(default="", max_length=2000)
 
 
+class PublicationApprovalInput(BaseModel):
+    """Bind a human review approval to the exact immutable release checksum."""
+    model_config = ConfigDict(extra="forbid")
+    checksum: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
+    note: str = Field(default="", max_length=2000)
+
+
 class AdminGeneratedDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
     title: str = Field(min_length=1, max_length=160)
@@ -998,6 +1005,8 @@ def _public_admin_release(doc: Dict[str, Any]) -> Dict[str, Any]:
         "betaEnabledBy": doc.get("betaEnabledBy"),
         "betaDecision": doc.get("betaDecision"),
         "betaDecisionHistory": doc.get("betaDecisionHistory", []),
+        "publicationApproval": doc.get("publicationApproval"),
+        "publicationApprovalHistory": doc.get("publicationApprovalHistory", []),
     }
 
 
@@ -1693,8 +1702,29 @@ async def record_admin_beta_decision(release_id: str, request: Request, payload:
     if payload.decision == "ready_for_release_review" and open_count:
         raise HTTPException(status_code=409, detail={"error": "beta_feedback_open", "openFeedbackCount": open_count})
     decision = {"decision": payload.decision, "note": payload.note.strip(), "decidedAt": _now(), "decidedBy": user["email"], "openFeedbackCount": open_count, "playerFacing": False, "published": False}
-    await admin_releases.update_one({"releaseId": release_id}, {"$set": {"betaDecision": decision}, "$push": {"betaDecisionHistory": {"$each": [decision], "$slice": -20}}})
+    await admin_releases.update_one({"releaseId": release_id}, {"$set": {"betaDecision": decision}, "$push": {"betaDecisionHistory": {"$each": [decision], "$slice": -20}}, "$unset": {"publicationApproval": ""}})
     return {"releaseId": release_id, "decision": decision, "productionPublished": False}
+
+
+@api.post("/admin/releases/{release_id}/publication-approval")
+async def approve_admin_publication_review(release_id: str, request: Request, payload: PublicationApprovalInput):
+    """Create a checksum-bound release sign-off; this endpoint never publishes."""
+    user = await _current_user(request)
+    _require_admin(user)
+    release = await admin_releases.find_one({"releaseId": release_id}, {"_id": 0})
+    if release is None:
+        raise HTTPException(status_code=404, detail={"error": "release_not_found"})
+    if release.get("status") != "staged" or not release.get("betaEnabled"):
+        raise HTTPException(status_code=409, detail={"error": "beta_release_not_active"})
+    if payload.checksum != release["manifest"]["sha256"]:
+        raise HTTPException(status_code=409, detail={"error": "release_checksum_mismatch"})
+    if release.get("betaDecision", {}).get("decision") != "ready_for_release_review":
+        raise HTTPException(status_code=409, detail={"error": "beta_decision_not_ready"})
+    if await beta_feedback.count_documents({"releaseId": release_id, "status": {"$ne": "resolved"}}):
+        raise HTTPException(status_code=409, detail={"error": "beta_feedback_open"})
+    approval = {"checksum": payload.checksum, "version": release["version"], "note": payload.note.strip(), "approvedAt": _now(), "approvedBy": user["email"], "playerFacing": False, "published": False}
+    await admin_releases.update_one({"releaseId": release_id}, {"$set": {"publicationApproval": approval}, "$push": {"publicationApprovalHistory": {"$each": [approval], "$slice": -20}}})
+    return {"releaseId": release_id, "approval": approval, "productionPublished": False}
 
 
 @api.put("/admin/releases/{release_id}/beta-access")
@@ -1711,12 +1741,12 @@ async def configure_admin_beta_access(release_id: str, request: Request, payload
         raise HTTPException(status_code=409, detail={"error": "beta_release_not_staged"})
     if not payload.emails:
         await beta_release_access.delete_many({"releaseId": release_id})
-        await admin_releases.update_one({"releaseId": release_id}, {"$set": {"betaEnabled": False, "betaDisabledAt": _now(), "betaDisabledBy": user["email"]}, "$unset": {"betaDecision": ""}})
+        await admin_releases.update_one({"releaseId": release_id}, {"$set": {"betaEnabled": False, "betaDisabledAt": _now(), "betaDisabledBy": user["email"]}, "$unset": {"betaDecision": "", "publicationApproval": ""}})
         return {"releaseId": release_id, "enabled": False, "invitedCount": 0, "playerFacing": False, "productionPublished": False}
     await beta_release_access.delete_many({"releaseId": release_id})
     now = _now()
     await beta_release_access.insert_many([{"releaseId": release_id, "email": email, "createdAt": now, "createdBy": user["email"]} for email in payload.emails])
-    await admin_releases.update_one({"releaseId": release_id}, {"$set": {"betaEnabled": True, "betaEnabledAt": now, "betaEnabledBy": user["email"]}, "$unset": {"betaDisabledAt": "", "betaDisabledBy": "", "betaDecision": ""}})
+    await admin_releases.update_one({"releaseId": release_id}, {"$set": {"betaEnabled": True, "betaEnabledAt": now, "betaEnabledBy": user["email"]}, "$unset": {"betaDisabledAt": "", "betaDisabledBy": "", "betaDecision": "", "publicationApproval": ""}})
     return {"releaseId": release_id, "enabled": True, "invitedCount": len(payload.emails), "playerFacing": True, "productionPublished": False}
 
 
@@ -1785,7 +1815,7 @@ async def submit_beta_feedback(session_id: str, request: Request, payload: BetaF
         raise HTTPException(status_code=404, detail={"error": "beta_session_not_found"})
     await _beta_release_for_user(session["bookId"], user)
     await beta_feedback.insert_one({"feedbackId": f"feedback_{uuid.uuid4().hex}", "releaseId": session["releaseId"], "sessionId": session_id, "userId": user["user_id"], "testerEmail": user["email"], "message": payload.message.strip(), "status": "open", "adminNote": "", "createdAt": _now()})
-    await admin_releases.update_one({"releaseId": session["releaseId"]}, {"$unset": {"betaDecision": ""}})
+    await admin_releases.update_one({"releaseId": session["releaseId"]}, {"$unset": {"betaDecision": "", "publicationApproval": ""}})
     return {"ok": True}
 
 
