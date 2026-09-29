@@ -1783,7 +1783,7 @@ async def inspect_admin_trusted_content_compatibility(release_id: str, request: 
                 continue
             choice_id = choice.get("choiceId", "unknown")
             if choice.get("conditions"):
-                issues.append({"severity": "blocking", "code": "conditions_need_trusted_rules", "sceneId": scene_id, "choiceId": choice_id, "message": "Private-draft conditions must be converted to trusted condition rules."})
+                issues.append({"severity": "required", "code": "conditions_need_conversion", "sceneId": scene_id, "choiceId": choice_id, "message": "Convert private-draft conditions to the trusted numeric condition contract."})
             if not choice.get("nextSceneId"):
                 issues.append({"severity": "blocking", "code": "terminal_route_needs_entrypoint", "sceneId": scene_id, "choiceId": choice_id, "message": "Terminal choices need a trusted terminal scene or explicit completion contract."})
             for effect in [*(choice.get("costs") or []), *(choice.get("effects") or [])]:
@@ -1791,13 +1791,13 @@ async def inspect_admin_trusted_content_compatibility(release_id: str, request: 
                     issues.append({"severity": "blocking", "code": "invalid_effect", "sceneId": scene_id, "choiceId": choice_id, "message": "A choice contains an invalid effect."})
                     continue
                 target = effect.get("target", "")
-                if target == "bloodCoins" or (isinstance(target, str) and target.startswith("affinity.")):
+                if target in {"bloodCoins", "humanity"} or (isinstance(target, str) and target.startswith("affinity.")):
                     supported_effects += 1
                 else:
                     unsupported_effects += 1
                     issues.append({"severity": "blocking", "code": "unsupported_trusted_effect", "sceneId": scene_id, "choiceId": choice_id, "target": target, "message": f"{target or 'Unknown'} is not represented by the current trusted reducer; add a server-authoritative rule before launch."})
     blockers = sum(1 for issue in issues if issue["severity"] == "blocking")
-    return {"format": "vampires-choice-trusted-content-compatibility/v1", "checkedAt": _now(), "releaseId": release_id, "checksum": release["manifest"]["sha256"], "summary": {"blockingIssueCount": blockers, "requiredWorkCount": len(issues) - blockers, "supportedEffectCount": supported_effects, "unsupportedEffectCount": unsupported_effects, "eligibleForTrustedConversion": blockers == 0}, "supportedMappings": {"bloodCoins": "effects.coinsChange", "affinity.<characterId>": "effects.relationshipChanges"}, "issues": issues, "publication": {"playerFacing": False, "published": False, "note": "Validation only. The trusted registry and player catalogue remain unchanged."}}
+    return {"format": "vampires-choice-trusted-content-compatibility/v1", "checkedAt": _now(), "releaseId": release_id, "checksum": release["manifest"]["sha256"], "summary": {"blockingIssueCount": blockers, "requiredWorkCount": len(issues) - blockers, "supportedEffectCount": supported_effects, "unsupportedEffectCount": unsupported_effects, "eligibleForTrustedConversion": blockers == 0}, "supportedMappings": {"bloodCoins": "effects.coinsChange", "humanity": "effects.humanityChange", "affinity.<characterId>": "effects.relationshipChanges", "numeric conditions": "condition: [{target, operator, value}]"}, "issues": issues, "publication": {"playerFacing": False, "published": False, "note": "Validation only. The trusted registry and player catalogue remain unchanged."}}
 
 
 @api.put("/admin/releases/{release_id}/beta-access")

@@ -29,12 +29,50 @@ def new_state(registry: Dict[str, Any]) -> Dict[str, Any]:
     The (6B) server-seeded opening grant is deliberately NOT applied here so the
     reducer's event-derived output can be validated in isolation.
     """
-    return {
+    state = {
         "coins": 0,
         "affinity": dict(registry.get("characters", {})),
         "flags": {},
         "achievements": [],  # ordered list of unlocked ids
     }
+    # New authored books can opt into humanity without changing the durable
+    # shape of existing trusted books and ledgers.
+    humanity_initial = registry.get("rules", {}).get("humanityInitial")
+    if type(humanity_initial) is int:
+        state["humanity"] = humanity_initial
+    return state
+
+
+def _condition_value(state: Dict[str, Any], target: str) -> Any:
+    if target == "bloodCoins":
+        return state.get("coins")
+    if target == "humanity":
+        return state.get("humanity")
+    if target.startswith("affinity."):
+        return state.get("affinity", {}).get(target.removeprefix("affinity."))
+    return None
+
+
+def _condition_matches(state: Dict[str, Any], condition: Any) -> bool:
+    """Evaluate the compact, trusted numeric condition contract safely."""
+    if condition is None:
+        return True
+    conditions = condition if isinstance(condition, list) else [condition]
+    for item in conditions:
+        if not isinstance(item, dict):
+            return False
+        target, operator, expected = item.get("target"), item.get("operator"), item.get("value")
+        current = _condition_value(state, target) if isinstance(target, str) else None
+        if type(current) is not int or type(expected) is not int:
+            return False
+        if operator == "gte" and current >= expected:
+            continue
+        if operator == "lte" and current <= expected:
+            continue
+        if operator == "eq" and current == expected:
+            continue
+        return False
+    return True
 
 
 def _unlock(state: Dict[str, Any], achievement_id: str) -> List[str]:
@@ -74,6 +112,8 @@ def apply_choice(
     choice = scene["choices"].get(choice_id)
     if choice is None:
         raise InvalidChoice(f"unknown choice '{choice_id}' on scene '{from_scene_id}'")
+    if not _condition_matches(state, choice.get("condition")):
+        raise InvalidChoice(f"conditions not met for choice '{choice_id}' on scene '{from_scene_id}'")
 
     effects = choice.get("effects") or {}
     rules = registry["rules"]
@@ -102,6 +142,17 @@ def apply_choice(
     coins_change = effects.get("coinsChange")
     if coins_change:
         state["coins"] = max(rules["coinsMin"], state["coins"] + coins_change)
+
+    # Optional only: books that declare humanityInitial own the new trusted
+    # dimension. Existing registry versions keep their historical state shape.
+    humanity_change = effects.get("humanityChange")
+    if humanity_change is not None:
+        if type(humanity_change) is not int or type(state.get("humanity")) is not int:
+            raise InvalidChoice("humanity effect is not supported by this content version")
+        low, high = rules.get("humanityMin", 0), rules.get("humanityMax", 100)
+        if type(low) is not int or type(high) is not int or low > high:
+            raise InvalidChoice("invalid humanity bounds")
+        state["humanity"] = clamp(state["humanity"] + humanity_change, low, high)
 
     # --- Explicit achievement ---
     if effects.get("achievementId"):
