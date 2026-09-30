@@ -84,6 +84,7 @@ staged_preview_sessions = db["staged_preview_sessions"]
 beta_release_access = db["beta_release_access"]
 beta_player_sessions = db["beta_player_sessions"]
 beta_feedback = db["beta_feedback"]
+trusted_catalogue_candidates = db["trusted_catalogue_candidates"]
 
 app = FastAPI(title="Vampire's Choice Cloud Save API")
 auth_logger = logging.getLogger("vampires_choice.auth")
@@ -135,6 +136,9 @@ async def _ensure_indexes():
     await beta_player_sessions.create_index([("releaseId", 1), ("userId", 1)], unique=True)
     await beta_player_sessions.create_index([("releaseId", 1), ("updatedAt", -1)])
     await beta_feedback.create_index([("releaseId", 1), ("createdAt", -1)])
+    # This audit collection is deliberately separate from the runtime player catalogue.
+    await trusted_catalogue_candidates.create_index("releaseId", unique=True)
+    await trusted_catalogue_candidates.create_index([("bookId", 1), ("registeredAt", -1)])
     await admin_drafts.create_index([("bookId", 1), ("updatedAt", -1)])
     await ensure_trusted_progression_indexes(
         activation_value=TRUSTED_PROGRESSION_ACTIVATION,
@@ -1007,6 +1011,7 @@ def _public_admin_release(doc: Dict[str, Any]) -> Dict[str, Any]:
         "betaDecisionHistory": doc.get("betaDecisionHistory", []),
         "publicationApproval": doc.get("publicationApproval"),
         "publicationApprovalHistory": doc.get("publicationApprovalHistory", []),
+        "catalogueRegistration": doc.get("catalogueRegistration"),
     }
 
 
@@ -1702,7 +1707,8 @@ async def record_admin_beta_decision(release_id: str, request: Request, payload:
     if payload.decision == "ready_for_release_review" and open_count:
         raise HTTPException(status_code=409, detail={"error": "beta_feedback_open", "openFeedbackCount": open_count})
     decision = {"decision": payload.decision, "note": payload.note.strip(), "decidedAt": _now(), "decidedBy": user["email"], "openFeedbackCount": open_count, "playerFacing": False, "published": False}
-    await admin_releases.update_one({"releaseId": release_id}, {"$set": {"betaDecision": decision}, "$push": {"betaDecisionHistory": {"$each": [decision], "$slice": -20}}, "$unset": {"publicationApproval": ""}})
+    await admin_releases.update_one({"releaseId": release_id}, {"$set": {"betaDecision": decision}, "$push": {"betaDecisionHistory": {"$each": [decision], "$slice": -20}}, "$unset": {"publicationApproval": "", "catalogueRegistration": ""}})
+    await _invalidate_catalogue_registration(release_id, "beta_decision_changed", user["email"])
     return {"releaseId": release_id, "decision": decision, "productionPublished": False}
 
 
@@ -1883,6 +1889,46 @@ async def preview_admin_narrative_conversion(release_id: str, request: Request):
     return {"format": "vampires-choice-narrative-conversion-preview/v1", "exportedAt": _now(), "release": _public_admin_release(release), "playerBundleCandidate": bundle, "trustedContract": {"humanityInitial": snapshot.get("playtestValues", {}).get("humanity", 100), "humanityMin": 0, "humanityMax": 100, "choices": trusted_choices}, "warnings": list(dict.fromkeys(warnings)), "publication": {"playerFacing": False, "published": False, "note": "Preview artifact only. It has not been added to the content loader, trusted registry, or public catalogue."}}
 
 
+@api.post("/admin/releases/{release_id}/catalogue-registration")
+async def register_admin_catalogue_candidate(release_id: str, request: Request):
+    """Register a reviewed conversion as an auditable rollout candidate.
+
+    Registration is intentionally not publication: normal player content, saves
+    and the trusted runtime registry remain untouched.
+    """
+    user = await _current_user(request)
+    _require_admin(user)
+    release = await admin_releases.find_one({"releaseId": release_id}, {"_id": 0})
+    if release is None:
+        raise HTTPException(status_code=404, detail={"error": "release_not_found"})
+    approval = release.get("publicationApproval")
+    if not isinstance(approval, dict) or approval.get("checksum") != release["manifest"]["sha256"]:
+        raise HTTPException(status_code=409, detail={"error": "publication_review_not_approved"})
+    compatibility = await inspect_admin_trusted_content_compatibility(release_id, request)
+    if compatibility["summary"]["blockingIssueCount"]:
+        raise HTTPException(status_code=409, detail={"error": "trusted_content_blocked", "blockingIssueCount": compatibility["summary"]["blockingIssueCount"]})
+    preview = await preview_admin_narrative_conversion(release_id, request)
+    now = _now()
+    registration = {"releaseId": release_id, "bookId": release["bookId"], "releaseVersion": release["version"], "checksum": release["manifest"]["sha256"], "status": "registered", "registeredAt": now, "registeredBy": user["email"], "playerFacing": False, "published": False, "note": "Registered for a later explicit rollout only; it is not in the player catalogue."}
+    try:
+        await trusted_catalogue_candidates.update_one(
+            {"releaseId": release_id},
+            {"$setOnInsert": {"candidateId": f"candidate_{uuid.uuid4().hex}", "createdAt": now}, "$set": {**registration, "playerBundleCandidate": preview["playerBundleCandidate"], "trustedContract": preview["trustedContract"], "compatibility": compatibility["summary"]}, "$inc": {"registrationRevision": 1}, "$push": {"history": {"$each": [{"action": "registered", "at": now, "by": user["email"], "checksum": registration["checksum"]}], "$slice": -20}}},
+        )
+    except DuplicateKeyError:
+        raise HTTPException(status_code=409, detail={"error": "catalogue_registration_conflict"})
+    candidate = await trusted_catalogue_candidates.find_one({"releaseId": release_id}, {"_id": 0, "playerBundleCandidate": 0, "trustedContract": 0})
+    await admin_releases.update_one({"releaseId": release_id}, {"$set": {"catalogueRegistration": candidate}})
+    return {"candidate": candidate, "productionPublished": False, "note": "Registered as a private rollout candidate only. The player catalogue and all player saves are unchanged."}
+
+
+async def _invalidate_catalogue_registration(release_id: str, reason: str, by: str) -> None:
+    """Keep the audit trail but prevent stale beta evidence being rolled out."""
+    now = _now()
+    await trusted_catalogue_candidates.update_one({"releaseId": release_id, "status": "registered"}, {"$set": {"status": "invalidated", "invalidatedAt": now, "invalidatedBy": by, "invalidationReason": reason, "playerFacing": False, "published": False}, "$push": {"history": {"$each": [{"action": "invalidated", "at": now, "by": by, "reason": reason}], "$slice": -20}}})
+    await admin_releases.update_one({"releaseId": release_id}, {"$unset": {"catalogueRegistration": ""}})
+
+
 @api.put("/admin/releases/{release_id}/beta-access")
 async def configure_admin_beta_access(release_id: str, request: Request, payload: BetaAccessUpdate):
     """Enable a selected, authenticated beta only for the supplied email list."""
@@ -1897,12 +1943,14 @@ async def configure_admin_beta_access(release_id: str, request: Request, payload
         raise HTTPException(status_code=409, detail={"error": "beta_release_not_staged"})
     if not payload.emails:
         await beta_release_access.delete_many({"releaseId": release_id})
-        await admin_releases.update_one({"releaseId": release_id}, {"$set": {"betaEnabled": False, "betaDisabledAt": _now(), "betaDisabledBy": user["email"]}, "$unset": {"betaDecision": "", "publicationApproval": ""}})
+        await admin_releases.update_one({"releaseId": release_id}, {"$set": {"betaEnabled": False, "betaDisabledAt": _now(), "betaDisabledBy": user["email"]}, "$unset": {"betaDecision": "", "publicationApproval": "", "catalogueRegistration": ""}})
+        await _invalidate_catalogue_registration(release_id, "beta_access_changed", user["email"])
         return {"releaseId": release_id, "enabled": False, "invitedCount": 0, "playerFacing": False, "productionPublished": False}
     await beta_release_access.delete_many({"releaseId": release_id})
     now = _now()
     await beta_release_access.insert_many([{"releaseId": release_id, "email": email, "createdAt": now, "createdBy": user["email"]} for email in payload.emails])
-    await admin_releases.update_one({"releaseId": release_id}, {"$set": {"betaEnabled": True, "betaEnabledAt": now, "betaEnabledBy": user["email"]}, "$unset": {"betaDisabledAt": "", "betaDisabledBy": "", "betaDecision": "", "publicationApproval": ""}})
+    await admin_releases.update_one({"releaseId": release_id}, {"$set": {"betaEnabled": True, "betaEnabledAt": now, "betaEnabledBy": user["email"]}, "$unset": {"betaDisabledAt": "", "betaDisabledBy": "", "betaDecision": "", "publicationApproval": "", "catalogueRegistration": ""}})
+    await _invalidate_catalogue_registration(release_id, "beta_access_changed", user["email"])
     return {"releaseId": release_id, "enabled": True, "invitedCount": len(payload.emails), "playerFacing": True, "productionPublished": False}
 
 
@@ -1971,7 +2019,8 @@ async def submit_beta_feedback(session_id: str, request: Request, payload: BetaF
         raise HTTPException(status_code=404, detail={"error": "beta_session_not_found"})
     await _beta_release_for_user(session["bookId"], user)
     await beta_feedback.insert_one({"feedbackId": f"feedback_{uuid.uuid4().hex}", "releaseId": session["releaseId"], "sessionId": session_id, "userId": user["user_id"], "testerEmail": user["email"], "message": payload.message.strip(), "status": "open", "adminNote": "", "createdAt": _now()})
-    await admin_releases.update_one({"releaseId": session["releaseId"]}, {"$unset": {"betaDecision": "", "publicationApproval": ""}})
+    await admin_releases.update_one({"releaseId": session["releaseId"]}, {"$unset": {"betaDecision": "", "publicationApproval": "", "catalogueRegistration": ""}})
+    await _invalidate_catalogue_registration(session["releaseId"], "new_beta_feedback", user["email"])
     return {"ok": True}
 
 
