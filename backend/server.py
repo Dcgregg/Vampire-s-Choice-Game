@@ -1714,9 +1714,12 @@ async def get_admin_beta_route_analytics(release_id: str, request: Request):
     """Return aggregate, private beta route signals without exposing testers."""
     user = await _current_user(request)
     _require_admin(user)
-    release = await admin_releases.find_one({"releaseId": release_id}, {"_id": 0, "releaseId": 1, "bookId": 1, "version": 1})
-    if release is None:
+    release_doc = await admin_releases.find_one({"releaseId": release_id}, {"_id": 0, "releaseId": 1, "bookId": 1, "version": 1, "snapshot": 1})
+    if release_doc is None:
         raise HTTPException(status_code=404, detail={"error": "release_not_found"})
+    release = {key: release_doc[key] for key in ("releaseId", "bookId", "version")}
+    scene_labels = {scene.get("sceneId"): scene.get("title", scene.get("sceneId")) for scene in release_doc.get("snapshot", {}).get("scenes", []) if isinstance(scene, dict) and isinstance(scene.get("sceneId"), str)}
+    choice_labels = {(scene.get("sceneId"), choice.get("choiceId")): choice.get("text", choice.get("choiceId")) for scene in release_doc.get("snapshot", {}).get("scenes", []) if isinstance(scene, dict) and isinstance(scene.get("sceneId"), str) for choice in scene.get("choices", []) if isinstance(choice, dict) and isinstance(choice.get("choiceId"), str)}
     sessions = await beta_player_sessions.find({"releaseId": release_id}, {"_id": 0, "sceneId": 1, "history": 1}).to_list(length=1000)
     choices: Dict[tuple[str, str], int] = {}
     current_scenes: Dict[str, int] = {}
@@ -1734,7 +1737,7 @@ async def get_admin_beta_route_analytics(release_id: str, request: Request):
             if isinstance(from_scene, str) and isinstance(choice_id, str):
                 key = (from_scene, choice_id)
                 choices[key] = choices.get(key, 0) + 1
-    return {"format": "vampires-choice-private-beta-route-analytics/v1", "generatedAt": _now(), "release": release, "summary": {"sessionCount": len(sessions), "completedSessionCount": completed, "activeSessionCount": len(sessions) - completed, "choiceEventCount": sum(choices.values())}, "topChoices": [{"sceneId": scene_id, "choiceId": choice_id, "count": count} for (scene_id, choice_id), count in sorted(choices.items(), key=lambda entry: (-entry[1], entry[0]))[:100]], "currentScenes": [{"sceneId": scene_id, "count": count} for scene_id, count in sorted(current_scenes.items(), key=lambda entry: (-entry[1], entry[0]))[:100]], "privacy": {"testerIdentitiesIncluded": False, "playerSavesTouched": 0, "published": False}, "note": "Aggregate private-beta telemetry for editorial review only. It cannot publish or alter player progress."}
+    return {"format": "vampires-choice-private-beta-route-analytics/v1", "generatedAt": _now(), "release": release, "summary": {"sessionCount": len(sessions), "completedSessionCount": completed, "activeSessionCount": len(sessions) - completed, "choiceEventCount": sum(choices.values())}, "topChoices": [{"sceneId": scene_id, "sceneTitle": scene_labels.get(scene_id, scene_id), "choiceId": choice_id, "choiceText": choice_labels.get((scene_id, choice_id), choice_id), "count": count} for (scene_id, choice_id), count in sorted(choices.items(), key=lambda entry: (-entry[1], entry[0]))[:100]], "currentScenes": [{"sceneId": scene_id, "sceneTitle": scene_labels.get(scene_id, scene_id), "count": count} for scene_id, count in sorted(current_scenes.items(), key=lambda entry: (-entry[1], entry[0]))[:100]], "privacy": {"testerIdentitiesIncluded": False, "playerSavesTouched": 0, "published": False}, "note": "Aggregate private-beta telemetry for editorial review only. It cannot publish or alter player progress."}
 
 
 @api.patch("/admin/releases/{release_id}/beta-feedback/{feedback_id}")
