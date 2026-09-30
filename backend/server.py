@@ -1929,6 +1929,37 @@ async def _invalidate_catalogue_registration(release_id: str, reason: str, by: s
     await admin_releases.update_one({"releaseId": release_id}, {"$unset": {"catalogueRegistration": ""}})
 
 
+@api.get("/admin/catalogue-candidates")
+async def list_admin_catalogue_candidates(request: Request):
+    """List rollout candidates without exposing their content payloads."""
+    user = await _current_user(request)
+    _require_admin(user)
+    candidates = await trusted_catalogue_candidates.find({}, {"_id": 0, "playerBundleCandidate": 0, "trustedContract": 0}).sort("registeredAt", -1).to_list(length=200)
+    return {"candidates": candidates, "playerFacing": False, "published": False}
+
+
+@api.post("/admin/catalogue-candidates/{candidate_id}/withdraw")
+async def withdraw_admin_catalogue_candidate(candidate_id: str, request: Request):
+    """Withdraw a registered rollout candidate while retaining its audit history."""
+    user = await _current_user(request)
+    _require_admin(user)
+    if not re.fullmatch(r"candidate_[0-9a-f]{32}", candidate_id):
+        raise HTTPException(status_code=404, detail={"error": "catalogue_candidate_not_found"})
+    now = _now()
+    candidate = await trusted_catalogue_candidates.find_one_and_update(
+        {"candidateId": candidate_id, "status": "registered"},
+        {"$set": {"status": "withdrawn", "withdrawnAt": now, "withdrawnBy": user["email"], "playerFacing": False, "published": False}, "$push": {"history": {"$each": [{"action": "withdrawn", "at": now, "by": user["email"]}], "$slice": -20}}},
+        return_document=True,
+    )
+    if candidate is None:
+        raise HTTPException(status_code=409, detail={"error": "catalogue_candidate_not_registered"})
+    await admin_releases.update_one({"releaseId": candidate["releaseId"]}, {"$unset": {"catalogueRegistration": ""}})
+    candidate.pop("_id", None)
+    candidate.pop("playerBundleCandidate", None)
+    candidate.pop("trustedContract", None)
+    return {"candidate": candidate, "productionPublished": False, "note": "Candidate withdrawn. No player content or player save changed."}
+
+
 @api.put("/admin/releases/{release_id}/beta-access")
 async def configure_admin_beta_access(release_id: str, request: Request, payload: BetaAccessUpdate):
     """Enable a selected, authenticated beta only for the supplied email list."""
