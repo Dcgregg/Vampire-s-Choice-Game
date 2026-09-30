@@ -1960,6 +1960,34 @@ async def withdraw_admin_catalogue_candidate(candidate_id: str, request: Request
     return {"candidate": candidate, "productionPublished": False, "note": "Candidate withdrawn. No player content or player save changed."}
 
 
+@api.get("/admin/catalogue-candidates/{candidate_id}/activation-preflight")
+async def inspect_admin_catalogue_activation_preflight(candidate_id: str, request: Request):
+    """Generate a read-only activation and rollback plan for a candidate.
+
+    It deliberately cannot activate a player-facing route. The final public
+    registry integration remains a separately authorised implementation step.
+    """
+    user = await _current_user(request)
+    _require_admin(user)
+    if not re.fullmatch(r"candidate_[0-9a-f]{32}", candidate_id):
+        raise HTTPException(status_code=404, detail={"error": "catalogue_candidate_not_found"})
+    candidate = await trusted_catalogue_candidates.find_one({"candidateId": candidate_id}, {"_id": 0, "playerBundleCandidate": 0, "trustedContract": 0})
+    if candidate is None:
+        raise HTTPException(status_code=404, detail={"error": "catalogue_candidate_not_found"})
+    release = await admin_releases.find_one({"releaseId": candidate["releaseId"]}, {"_id": 0})
+    matching_approval = bool(release and isinstance(release.get("publicationApproval"), dict) and release["publicationApproval"].get("checksum") == candidate["checksum"] and release["manifest"]["sha256"] == candidate["checksum"])
+    registered = candidate.get("status") == "registered"
+    compatibility = candidate.get("compatibility", {})
+    no_blockers = compatibility.get("blockingIssueCount") == 0
+    checks = [
+        {"id": "candidate_registered", "passed": registered, "message": "Candidate remains registered and has not been withdrawn or invalidated."},
+        {"id": "checksum_approval", "passed": matching_approval, "message": "The immutable release and controlled approval still match the candidate checksum."},
+        {"id": "trusted_compatibility", "passed": no_blockers, "message": "The recorded trusted-content compatibility report has no blockers."},
+        {"id": "public_runtime_boundary", "passed": False, "message": "Public runtime registration is intentionally not implemented by this preflight."},
+    ]
+    return {"format": "vampires-choice-catalogue-activation-preflight/v1", "checkedAt": _now(), "candidate": candidate, "checks": checks, "activationReady": False, "productionPublished": False, "rollbackPlan": {"action": "withdraw candidate or select a prior immutable candidate before a future runtime activation", "playerSavesTouched": 0, "playerCatalogueChanged": False}, "note": "Read-only activation preflight. It cannot publish, register player content, or alter player saves."}
+
+
 @api.put("/admin/releases/{release_id}/beta-access")
 async def configure_admin_beta_access(release_id: str, request: Request, payload: BetaAccessUpdate):
     """Enable a selected, authenticated beta only for the supplied email list."""

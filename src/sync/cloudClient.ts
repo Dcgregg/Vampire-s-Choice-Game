@@ -116,6 +116,7 @@ export interface BetaPlayerSession { sessionId: string; bookId: string; releaseI
 export interface BetaDecision { decision: 'continue_testing' | 'ready_for_release_review'; note: string; decidedAt: string; decidedBy: string; openFeedbackCount: number; playerFacing: false; published: false; }
 export interface PublicationApproval { checksum: string; version: number; note: string; approvedAt: string; approvedBy: string; playerFacing: false; published: false; }
 export interface CatalogueRegistration { candidateId: string; releaseId: string; bookId: string; releaseVersion: number; checksum: string; status: 'registered' | 'invalidated' | 'withdrawn'; registeredAt: string; registeredBy: string; registrationRevision: number; playerFacing: false; published: false; note: string; }
+export interface CatalogueActivationPreflight { format: 'vampires-choice-catalogue-activation-preflight/v1'; checkedAt: string; candidate: CatalogueRegistration; checks: Array<{ id: string; passed: boolean; message: string }>; activationReady: false; productionPublished: false; rollbackPlan: { action: string; playerSavesTouched: 0; playerCatalogueChanged: false }; note: string; }
 export interface BetaReadiness { releaseId: string; bookId: string; version: number; enabled: boolean; featureEnabled: boolean; invitedCount: number; sessionCount: number; completedSessionCount: number; feedbackCount: number; openFeedbackCount: number; resolvedFeedbackCount: number; readyForDecision: boolean; decision?: BetaDecision | null; accountSavesTouched: 0; productionPublished: false; }
 export interface BetaFeedback { feedbackId: string; sessionId: string; testerEmail: string; message: string; createdAt: string; status: 'open' | 'resolved'; adminNote: string; resolvedAt?: string | null; resolvedBy?: string | null; }
 export interface BetaReport { format: 'vampires-choice-private-beta-report/v1'; exportedAt: string; release: AdminReleaseVersion; summary: { enabled: boolean; invitedCount: number; sessionCount: number; completedSessionCount: number; feedbackCount: number; openFeedbackCount: number; resolvedFeedbackCount: number; readyForReleaseReview: boolean; decision?: BetaDecision | null; }; feedback: Array<Omit<BetaFeedback, 'sessionId' | 'resolvedBy'>>; publication: { playerFacing: false; published: false; note: string; }; }
@@ -401,6 +402,11 @@ export async function withdrawReleaseCatalogueCandidate(candidateId: string): Pr
   const r = await fetch(`${API_BASE}/admin/catalogue-candidates/${candidateId}/withdraw`, { method: 'POST', credentials: 'include' });
   if (!r.ok) throw new Error(`withdrawReleaseCatalogueCandidate failed: ${r.status}`);
   return (await r.json()) as { candidate: CatalogueRegistration; productionPublished: false; note: string };
+}
+export async function getReleaseCatalogueActivationPreflight(candidateId: string): Promise<CatalogueActivationPreflight> {
+  const r = await fetch(`${API_BASE}/admin/catalogue-candidates/${candidateId}/activation-preflight`, { credentials: 'include' });
+  if (!r.ok) throw new Error(`getReleaseCatalogueActivationPreflight failed: ${r.status}`);
+  return (await r.json()) as CatalogueActivationPreflight;
 }
 
 export async function getStagedReleasePreview(bookId: string): Promise<StagedReleasePreview | null> {
