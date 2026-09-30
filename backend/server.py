@@ -1800,6 +1800,70 @@ async def inspect_admin_trusted_content_compatibility(release_id: str, request: 
     return {"format": "vampires-choice-trusted-content-compatibility/v1", "checkedAt": _now(), "releaseId": release_id, "checksum": release["manifest"]["sha256"], "summary": {"blockingIssueCount": blockers, "requiredWorkCount": len(issues) - blockers, "supportedEffectCount": supported_effects, "unsupportedEffectCount": unsupported_effects, "eligibleForTrustedConversion": blockers == 0}, "supportedMappings": {"bloodCoins": "effects.coinsChange", "humanity": "effects.humanityChange", "affinity.<characterId>": "effects.relationshipChanges", "numeric conditions": "condition: [{target, operator, value}]"}, "issues": issues, "publication": {"playerFacing": False, "published": False, "note": "Validation only. The trusted registry and player catalogue remain unchanged."}}
 
 
+@api.get("/admin/releases/{release_id}/narrative-conversion-preview")
+async def preview_admin_narrative_conversion(release_id: str, request: Request):
+    """Build a portable candidate from an approved draft without registering it.
+
+    The standard player bundle retains narrative text and supported browser
+    effects. Its ``trustedContract`` carries the server-authoritative humanity
+    and condition data for the later, explicit engine integration step.
+    """
+    user = await _current_user(request)
+    _require_admin(user)
+    release = await admin_releases.find_one({"releaseId": release_id}, {"_id": 0})
+    if release is None:
+        raise HTTPException(status_code=404, detail={"error": "release_not_found"})
+    approval = release.get("publicationApproval")
+    if not isinstance(approval, dict) or approval.get("checksum") != release["manifest"]["sha256"]:
+        raise HTTPException(status_code=409, detail={"error": "publication_review_not_approved"})
+    snapshot = release["snapshot"]
+    source_scenes = [scene for scene in snapshot.get("scenes", []) if isinstance(scene, dict)]
+    if not source_scenes:
+        raise HTTPException(status_code=422, detail={"error": "release_has_no_scenes"})
+    ordered = sorted(source_scenes, key=lambda scene: (int(scene.get("chapterNumber", 1)), scene.get("sceneId", "")))
+    chapter_scenes: Dict[int, List[Dict[str, Any]]] = {}
+    for scene in ordered:
+        chapter_scenes.setdefault(int(scene.get("chapterNumber", 1)), []).append(scene)
+    converted_scenes, trusted_choices, warnings = [], {}, ["This is a conversion preview. It is not registered in the player content loader or trusted registry."]
+    for chapter, scenes in chapter_scenes.items():
+        for index, scene in enumerate(scenes, start=1):
+            choices = []
+            for choice in scene.get("choices", []):
+                if not isinstance(choice, dict):
+                    continue
+                browser_effects: Dict[str, Any] = {}
+                relationships: Dict[str, int] = {}
+                coins_change = 0
+                humanity_change = 0
+                for effect in [*(choice.get("costs") or []), *(choice.get("effects") or [])]:
+                    if not isinstance(effect, dict) or type(effect.get("delta")) is not int:
+                        continue
+                    target, delta = effect.get("target"), effect["delta"]
+                    if target == "bloodCoins":
+                        coins_change += delta
+                    elif target == "humanity":
+                        humanity_change += delta
+                    elif isinstance(target, str) and target.startswith("affinity."):
+                        character_id = target.removeprefix("affinity.")
+                        relationships[character_id] = relationships.get(character_id, 0) + delta
+                if coins_change:
+                    browser_effects["coinsChange"] = coins_change
+                if relationships:
+                    browser_effects["relationshipChanges"] = relationships
+                choice_id = choice.get("choiceId", "")
+                conditions = choice.get("conditions") or []
+                trusted_choices[f"{scene.get('sceneId')}:{choice_id}"] = {"conditions": conditions, "humanityChange": humanity_change, "costs": choice.get("costs") or [], "effects": choice.get("effects") or []}
+                if humanity_change:
+                    warnings.append(f"{scene.get('sceneId')} / {choice_id}: humanity is retained in trustedContract and needs the future player-state presentation bridge.")
+                if conditions:
+                    warnings.append(f"{scene.get('sceneId')} / {choice_id}: conditions are retained in trustedContract for trusted numeric conversion.")
+                choices.append({"id": choice_id, "text": choice.get("text", ""), "nextSceneId": choice.get("nextSceneId") or scene.get("sceneId"), "endsBook": not bool(choice.get("nextSceneId")), "consequencesSummary": choice.get("effectsNotes") or None, "effects": browser_effects or None})
+            converted_scenes.append({"id": scene.get("sceneId"), "bookId": snapshot.get("bookId"), "chapterNumber": chapter, "chapterTitle": scenes[0].get("title", f"Chapter {chapter}"), "sceneTitle": scene.get("title", "Untitled scene"), "sceneIndex": index, "paragraphs": [part for part in str(scene.get("body", "")).split("\n\n") if part] or [""], "dialogues": [{"speaker": line.get("displayName", line.get("speakerId", "Narrator")), "text": line.get("text", ""), "characterId": line.get("speakerId"), "mood": line.get("mood") if line.get("mood") in {"neutral", "intense", "whisper", "romantic", "warning"} else "neutral"} for line in scene.get("dialogue", []) if isinstance(line, dict)], "choices": choices})
+    chapters = [{"number": chapter, "title": scenes[0].get("title", f"Chapter {chapter}"), "summary": "Converted from approved draft.", "firstSceneId": scenes[0].get("sceneId"), "totalScenes": len(scenes), "rewardCoins": 0} for chapter, scenes in sorted(chapter_scenes.items())]
+    bundle = {"contentSchemaVersion": 1, "book": {"id": snapshot["bookId"], "version": release["version"], "seriesId": "draft-series", "order": 0, "title": snapshot.get("title", "Untitled"), "subtitle": "Converted release candidate", "synopsis": snapshot.get("synopsis", ""), "coverArtStyle": "gothic-romance", "startingSceneId": ordered[0].get("sceneId"), "chapters": chapters}, "scenes": converted_scenes}
+    return {"format": "vampires-choice-narrative-conversion-preview/v1", "exportedAt": _now(), "release": _public_admin_release(release), "playerBundleCandidate": bundle, "trustedContract": {"humanityInitial": snapshot.get("playtestValues", {}).get("humanity", 100), "humanityMin": 0, "humanityMax": 100, "choices": trusted_choices}, "warnings": list(dict.fromkeys(warnings)), "publication": {"playerFacing": False, "published": False, "note": "Preview artifact only. It has not been added to the content loader, trusted registry, or public catalogue."}}
+
+
 @api.put("/admin/releases/{release_id}/beta-access")
 async def configure_admin_beta_access(release_id: str, request: Request, payload: BetaAccessUpdate):
     """Enable a selected, authenticated beta only for the supplied email list."""

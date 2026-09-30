@@ -119,6 +119,7 @@ export interface BetaFeedback { feedbackId: string; sessionId: string; testerEma
 export interface BetaReport { format: 'vampires-choice-private-beta-report/v1'; exportedAt: string; release: AdminReleaseVersion; summary: { enabled: boolean; invitedCount: number; sessionCount: number; completedSessionCount: number; feedbackCount: number; openFeedbackCount: number; resolvedFeedbackCount: number; readyForReleaseReview: boolean; decision?: BetaDecision | null; }; feedback: Array<Omit<BetaFeedback, 'sessionId' | 'resolvedBy'>>; publication: { playerFacing: false; published: false; note: string; }; }
 export interface PublicationHandoff { format: 'vampires-choice-controlled-publication-handoff/v1'; exportedAt: string; release: AdminReleaseVersion; snapshot: AdminDraft; compatibility: { sourceFormat: string; targetFormat: string; requiresTrustedContentConversion: true; checksum: string; note: string; }; publication: { playerFacing: false; published: false; note: string; }; }
 export interface TrustedContentCompatibility { format: 'vampires-choice-trusted-content-compatibility/v1'; checkedAt: string; releaseId: string; checksum: string; summary: { blockingIssueCount: number; requiredWorkCount: number; supportedEffectCount: number; unsupportedEffectCount: number; eligibleForTrustedConversion: boolean; }; supportedMappings: Record<string, string>; issues: Array<{ severity: 'blocking' | 'required'; code: string; message: string; sceneId?: string; choiceId?: string; target?: string; }>; publication: { playerFacing: false; published: false; note: string; }; }
+export interface NarrativeConversionPreview { format: 'vampires-choice-narrative-conversion-preview/v1'; exportedAt: string; release: AdminReleaseVersion; playerBundleCandidate: unknown; trustedContract: { humanityInitial: number; humanityMin: number; humanityMax: number; choices: Record<string, unknown>; }; warnings: string[]; publication: { playerFacing: false; published: false; note: string; }; }
 
 export interface AdminChoice {
   choiceId: string;
@@ -378,6 +379,11 @@ export async function getTrustedContentCompatibility(releaseId: string): Promise
   const r = await fetch(`${API_BASE}/admin/releases/${releaseId}/trusted-content-compatibility`, { credentials: 'include' });
   if (!r.ok) throw new Error(`getTrustedContentCompatibility failed: ${r.status}`);
   return (await r.json()) as TrustedContentCompatibility;
+}
+export async function getNarrativeConversionPreview(releaseId: string): Promise<NarrativeConversionPreview> {
+  const r = await fetch(`${API_BASE}/admin/releases/${releaseId}/narrative-conversion-preview`, { credentials: 'include' });
+  if (!r.ok) throw new Error(`getNarrativeConversionPreview failed: ${r.status}`);
+  return (await r.json()) as NarrativeConversionPreview;
 }
 
 export async function getStagedReleasePreview(bookId: string): Promise<StagedReleasePreview | null> {
