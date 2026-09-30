@@ -78,6 +78,12 @@ export function evaluateCondition(
   if (condition.maxCoins !== undefined && state.bloodCoins > condition.maxCoins) {
     reasons.push(`bloodCoins ${state.bloodCoins} > ${condition.maxCoins}`);
   }
+  if (condition.minHumanity !== undefined && state.humanity < condition.minHumanity) {
+    reasons.push(`humanity ${state.humanity} < ${condition.minHumanity}`);
+  }
+  if (condition.maxHumanity !== undefined && state.humanity > condition.maxHumanity) {
+    reasons.push(`humanity ${state.humanity} > ${condition.maxHumanity}`);
+  }
 
   // --- Story progress ---
   if (condition.requiredBook !== undefined && state.progress.currentBookId !== condition.requiredBook) {

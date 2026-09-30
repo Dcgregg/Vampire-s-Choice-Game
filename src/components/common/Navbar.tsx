@@ -1,7 +1,7 @@
 import React from 'react';
 import { useGameState } from '../../state/useGameState';
 import { PWAInstallButton } from './PWAInstallButton';
-import { Volume2, VolumeX, Flame, Droplet } from 'lucide-react';
+import { Volume2, VolumeX, Flame, Droplet, HeartPulse } from 'lucide-react';
 import { useTrustedProgression } from '../../progression/useTrustedProgression';
 
 export const Navbar: React.FC = () => {
@@ -49,6 +49,11 @@ export const Navbar: React.FC = () => {
           >
             <Droplet className="h-3.5 w-3.5 fill-rose-600 text-rose-500 animate-pulse" />
             <span className="font-interface font-semibold text-rose-100">{displayedCoins}</span>
+          </div>
+
+          <div className="hidden sm:flex items-center gap-1.5 rounded-full border border-violet-900/40 bg-violet-950/30 px-2.5 py-1 text-xs text-violet-200" title="Humanity — always between 0 and 100">
+            <HeartPulse className="h-3.5 w-3.5 text-violet-300" />
+            <span className="font-interface font-semibold">{state.humanity}</span>
           </div>
 
           {/* Daily Streak */}

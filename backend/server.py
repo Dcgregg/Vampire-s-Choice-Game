@@ -1852,12 +1852,31 @@ async def preview_admin_narrative_conversion(release_id: str, request: Request):
                     browser_effects["relationshipChanges"] = relationships
                 choice_id = choice.get("choiceId", "")
                 conditions = choice.get("conditions") or []
+                if humanity_change:
+                    browser_effects["humanityChange"] = humanity_change
+                browser_condition: Dict[str, Any] = {}
+                relationship_conditions: Dict[str, Dict[str, int]] = {}
+                for condition in conditions:
+                    if not isinstance(condition, dict):
+                        continue
+                    target, operator, value = condition.get("target"), condition.get("operator"), condition.get("value")
+                    if type(value) is not int or operator not in {"gte", "lte"}:
+                        continue
+                    if target == "humanity":
+                        browser_condition["minHumanity" if operator == "gte" else "maxHumanity"] = value
+                    elif target == "bloodCoins":
+                        browser_condition["minCoins" if operator == "gte" else "maxCoins"] = value
+                    elif isinstance(target, str) and target.startswith("affinity."):
+                        character_id = target.removeprefix("affinity.")
+                        relationship_conditions.setdefault(character_id, {})["min" if operator == "gte" else "max"] = value
+                if relationship_conditions:
+                    browser_condition["relationships"] = [{"characterId": character_id, **bounds} for character_id, bounds in relationship_conditions.items()]
                 trusted_choices[f"{scene.get('sceneId')}:{choice_id}"] = {"conditions": conditions, "humanityChange": humanity_change, "costs": choice.get("costs") or [], "effects": choice.get("effects") or []}
                 if humanity_change:
                     warnings.append(f"{scene.get('sceneId')} / {choice_id}: humanity is retained in trustedContract and needs the future player-state presentation bridge.")
                 if conditions:
                     warnings.append(f"{scene.get('sceneId')} / {choice_id}: conditions are retained in trustedContract for trusted numeric conversion.")
-                choices.append({"id": choice_id, "text": choice.get("text", ""), "nextSceneId": choice.get("nextSceneId") or scene.get("sceneId"), "endsBook": not bool(choice.get("nextSceneId")), "consequencesSummary": choice.get("effectsNotes") or None, "effects": browser_effects or None})
+                choices.append({"id": choice_id, "text": choice.get("text", ""), "nextSceneId": choice.get("nextSceneId") or scene.get("sceneId"), "endsBook": not bool(choice.get("nextSceneId")), "consequencesSummary": choice.get("effectsNotes") or None, "effects": browser_effects or None, "condition": browser_condition or None})
             converted_scenes.append({"id": scene.get("sceneId"), "bookId": snapshot.get("bookId"), "chapterNumber": chapter, "chapterTitle": scenes[0].get("title", f"Chapter {chapter}"), "sceneTitle": scene.get("title", "Untitled scene"), "sceneIndex": index, "paragraphs": [part for part in str(scene.get("body", "")).split("\n\n") if part] or [""], "dialogues": [{"speaker": line.get("displayName", line.get("speakerId", "Narrator")), "text": line.get("text", ""), "characterId": line.get("speakerId"), "mood": line.get("mood") if line.get("mood") in {"neutral", "intense", "whisper", "romantic", "warning"} else "neutral"} for line in scene.get("dialogue", []) if isinstance(line, dict)], "choices": choices})
     chapters = [{"number": chapter, "title": scenes[0].get("title", f"Chapter {chapter}"), "summary": "Converted from approved draft.", "firstSceneId": scenes[0].get("sceneId"), "totalScenes": len(scenes), "rewardCoins": 0} for chapter, scenes in sorted(chapter_scenes.items())]
     bundle = {"contentSchemaVersion": 1, "book": {"id": snapshot["bookId"], "version": release["version"], "seriesId": "draft-series", "order": 0, "title": snapshot.get("title", "Untitled"), "subtitle": "Converted release candidate", "synopsis": snapshot.get("synopsis", ""), "coverArtStyle": "gothic-romance", "startingSceneId": ordered[0].get("sceneId"), "chapters": chapters}, "scenes": converted_scenes}

@@ -1,6 +1,6 @@
 import React from 'react';
 import { useGameState } from '../../state/useGameState';
-import { BookOpen, Sparkles, Play, Info, Flame, Droplet, Library } from 'lucide-react';
+import { BookOpen, Sparkles, Play, Info, Flame, Droplet, HeartPulse, Library } from 'lucide-react';
 import { PWAInstallButton } from '../common/PWAInstallButton';
 
 export const LandingScreen: React.FC = () => {
@@ -70,6 +70,7 @@ export const LandingScreen: React.FC = () => {
             </div>
             <div className="flex items-center gap-2">
               <span className="flex items-center gap-1 text-rose-300"><Droplet className="w-3 h-3 fill-rose-600 text-rose-600" /> {state.bloodCoins}</span>
+              <span className="flex items-center gap-1 text-violet-300"><HeartPulse className="w-3 h-3" /> {state.humanity}</span>
               <span className="flex items-center gap-1 text-amber-300"><Flame className="w-3 h-3 fill-amber-500 text-amber-500" /> {state.dailyStreak}d</span>
             </div>
           </div>

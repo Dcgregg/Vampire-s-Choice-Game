@@ -103,6 +103,13 @@ export function applyEffects(state: PlayerState, effects?: ChoiceEffect): Effect
     events.push({ type: 'coinsChanged', delta: effects.coinsChange, total });
   }
 
+  // --- Humanity ---
+  if (effects.humanityChange) {
+    const humanity = clamp(next.humanity + effects.humanityChange, 0, 100);
+    next = { ...next, humanity };
+    events.push({ type: 'consequence', message: `Humanity ${effects.humanityChange >= 0 ? '+' : ''}${effects.humanityChange} (${humanity}/100)` });
+  }
+
   // --- Daily streak increment (explicit, content-driven) ---
   if (effects.streakIncrement) {
     const value = next.dailyStreak + 1;

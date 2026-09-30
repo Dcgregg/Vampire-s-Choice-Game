@@ -154,6 +154,7 @@ function baseState(): PlayerState {
       completedChapters: [], completedBooks: [], sceneHistory: [],
     },
     bloodCoins: 0, // isolate event-derived value from the (6B) opening grant
+    humanity: 100,
     dailyStreak: 0,
     lastLoginDate: '',
     achievements,

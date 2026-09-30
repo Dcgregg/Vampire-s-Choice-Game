@@ -1,6 +1,6 @@
 import React from 'react';
 import { useGameState } from '../../state/useGameState';
-import { User, Flame, Droplet, BookOpen, Key, Compass, Shield, Award } from 'lucide-react';
+import { User, Flame, Droplet, HeartPulse, BookOpen, Key, Compass, Shield, Award } from 'lucide-react';
 import { useTrustedProgression } from '../../progression/useTrustedProgression';
 
 export const CharacterScreen: React.FC = () => {
@@ -57,7 +57,7 @@ export const CharacterScreen: React.FC = () => {
         </p>
 
         {/* Currency & Streak Stats */}
-        <div className="mt-5 grid grid-cols-2 gap-3 border-t border-white/5 pt-4">
+        <div className="mt-5 grid grid-cols-3 gap-3 border-t border-white/5 pt-4">
           <div className="rounded-xl border border-rose-900/40 bg-rose-950/20 p-2.5">
             <div className="flex items-center justify-center gap-1.5 text-xs text-rose-300">
               <Droplet className="w-3.5 h-3.5 fill-rose-600 text-rose-500" />
@@ -66,6 +66,14 @@ export const CharacterScreen: React.FC = () => {
             <span className="text-[10px] text-stone-400 mt-0.5 block">
               {trustedAccount ? 'Confirmed Blood Coins' : 'Blood Coins'}
             </span>
+          </div>
+
+          <div className="rounded-xl border border-violet-900/40 bg-violet-950/20 p-2.5">
+            <div className="flex items-center justify-center gap-1.5 text-xs text-violet-200">
+              <HeartPulse className="w-3.5 h-3.5 text-violet-300" />
+              <span className="font-semibold text-white">{state.humanity}</span>
+            </div>
+            <span className="text-[10px] text-stone-400 mt-0.5 block">Humanity / 100</span>
           </div>
 
           <div className="rounded-xl border border-amber-900/40 bg-amber-950/20 p-2.5">

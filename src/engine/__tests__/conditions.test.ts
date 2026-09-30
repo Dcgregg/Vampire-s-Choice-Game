@@ -68,6 +68,14 @@ describe('conditions — currency / progress / identity', () => {
     expect(evaluateCondition({ maxCoins: 99 }, state).available).toBe(false);
   });
 
+  it('humanity bounds', () => {
+    const state = baseState({ humanity: 60 });
+    expect(evaluateCondition({ minHumanity: 60 }, state).available).toBe(true);
+    expect(evaluateCondition({ minHumanity: 61 }, state).available).toBe(false);
+    expect(evaluateCondition({ maxHumanity: 60 }, state).available).toBe(true);
+    expect(evaluateCondition({ maxHumanity: 59 }, state).available).toBe(false);
+  });
+
   it('story progress: chapter, book, visitedScene', () => {
     const state = baseState({
       progress: {

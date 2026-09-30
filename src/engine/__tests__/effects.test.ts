@@ -53,6 +53,11 @@ describe('effects — flags / currency / streak / notification', () => {
     expect(state.bloodCoins).toBe(0);
   });
 
+  it('clamps humanity to the inclusive 0–100 range', () => {
+    expect(applyEffects(baseState({ humanity: 95 }), { humanityChange: 99 }).state.humanity).toBe(100);
+    expect(applyEffects(baseState({ humanity: 5 }), { humanityChange: -99 }).state.humanity).toBe(0);
+  });
+
   it('honours explicit streakIncrement effect', () => {
     const { state, events } = applyEffects(baseState({ dailyStreak: 3 }), { streakIncrement: true });
     expect(state.dailyStreak).toBe(4);
