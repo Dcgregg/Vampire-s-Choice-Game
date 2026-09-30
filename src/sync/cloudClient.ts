@@ -223,6 +223,11 @@ export async function createSampleAdminDraft(): Promise<AdminDraft> {
   if (!r.ok) throw new Error(`createSampleAdminDraft failed: ${r.status}`);
   return (await r.json()) as AdminDraft;
 }
+export async function createBookTwoStarterDraft(): Promise<AdminDraft> {
+  const r = await fetch(`${API_BASE}/admin/drafts/book-two-starter`, { method: 'POST', credentials: 'include' });
+  if (!r.ok) throw new Error(`createBookTwoStarterDraft failed: ${r.status}`);
+  return (await r.json()) as AdminDraft;
+}
 
 export async function importAdminBookJson(content: Record<string, unknown>): Promise<AdminDraft> {
   const r = await fetch(`${API_BASE}/admin/drafts/import-book-json`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ content }) });

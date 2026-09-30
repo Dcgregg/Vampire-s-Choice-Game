@@ -871,6 +871,16 @@ def _sample_story_scenes() -> List[Dict[str, Any]]:
     ]
 
 
+def _book_two_starter_scenes() -> List[Dict[str, Any]]:
+    """A deliberately editable Book II outline, never player-facing content."""
+    return [
+        {"sceneId": "book2-aftermath", "chapterNumber": 1, "title": "After the Bell", "body": "The final bell at Blackthorn Academy has stopped ringing, but {{player.name}} can still feel it in the bones. Dawn has found the corridors empty—except for the sealed door that was not there last night.\n\nA crimson sigil warms beneath your palm. Someone has left a message for you: *Come alone, and bring what you chose to become.*", "dialogue": [], "choices": [{"choiceId": "open-door", "text": "Break the seal and enter the hidden corridor.", "nextSceneId": "book2-hidden-corridor", "effectsNotes": "Follow the mystery."}, {"choiceId": "find-ally", "text": "Find an ally before you face the message.", "nextSceneId": "book2-ally", "effectsNotes": "Seek support first."}]},
+        {"sceneId": "book2-hidden-corridor", "chapterNumber": 1, "title": "The Hidden Corridor", "body": "Behind the door, the academy becomes older. Portraits have been turned to face the wall, and a trail of candlewax leads toward a locked observatory.\n\nInside, a stranger waits beside a map marked with names you recognise.", "dialogue": [], "choices": [{"choiceId": "hear-stranger", "text": "Hear the stranger’s warning.", "nextSceneId": "book2-revelation", "effectsNotes": "Learn the threat."}, {"choiceId": "take-map", "text": "Take the map and leave before the stranger can stop you.", "nextSceneId": "book2-revelation", "effectsNotes": "Keep control of the clue."}]},
+        {"sceneId": "book2-ally", "chapterNumber": 1, "title": "An Unsteady Alliance", "body": "Your chosen ally meets you in the abandoned library. Between the shelves, every promise from last term seems to carry a different weight.\n\nTogether, you trace the crimson sigil to a page torn from the academy’s forbidden records.", "dialogue": [], "choices": [{"choiceId": "share-truth", "text": "Share everything you know.", "nextSceneId": "book2-revelation", "effectsNotes": "Strengthen the alliance."}, {"choiceId": "keep-secret", "text": "Keep the most dangerous detail to yourself.", "nextSceneId": "book2-revelation", "effectsNotes": "Protect your secret."}]},
+        {"sceneId": "book2-revelation", "chapterNumber": 1, "title": "A New Hunger", "body": "The record names a power beneath Blackthorn Academy—and says it has begun to wake. The message was not an invitation. It was a test.\n\nThis starter chapter ends here. Replace, expand, or branch these scenes before sending the draft to review.", "dialogue": [], "choices": []},
+    ]
+
+
 def _public_admin_draft(doc: Dict[str, Any]) -> Dict[str, Any]:
     current_approval = doc.get("reviewApproval")
     # Phase 16 introduced a history log. Older approved drafts still have the
@@ -1203,6 +1213,32 @@ async def create_sample_admin_draft(request: Request):
         "synopsis": "A complete private sample story for testing manual scene authoring and draft playthroughs at Blackthorn Academy.",
         "branchNotes": "This sample is safe to edit or delete. It demonstrates a complete six-scene route with linked choices and no player-facing publication.",
         "scenes": _sample_story_scenes(),
+        "revision": 1,
+        "status": "draft",
+        "createdAt": now,
+        "updatedAt": now,
+        "updatedBy": user["email"],
+    }
+    await admin_drafts.insert_one(doc)
+    return _public_admin_draft(doc)
+
+
+@api.post("/admin/drafts/book-two-starter", status_code=201)
+async def create_book_two_starter_admin_draft(request: Request):
+    """Create a valid, private Book II production scaffold for an administrator."""
+    user = await _current_user(request)
+    _require_admin(user)
+    now = _now()
+    doc = {
+        "draftId": f"draft_{uuid.uuid4().hex}",
+        "bookId": "book2",
+        "title": "A Vampire’s Choice — Book II (working draft)",
+        "synopsis": "An editable opening scaffold for Book II: the consequences of Blackthorn Academy’s first term lead to a hidden threat beneath the school.",
+        "branchNotes": "Production starter only. Replace the placeholder route with canon prose, character dialogue, effects and meaningful branches before review. This draft never enters player content unless it completes the normal review, beta and controlled release workflow.",
+        "storyValues": {},
+        "relationshipValues": {},
+        "playtestValues": {"humanity": 100, "bloodCoins": 250},
+        "scenes": _book_two_starter_scenes(),
         "revision": 1,
         "status": "draft",
         "createdAt": now,
