@@ -1709,6 +1709,34 @@ async def export_admin_beta_report(release_id: str, request: Request):
     }
 
 
+@api.get("/admin/releases/{release_id}/beta-route-analytics")
+async def get_admin_beta_route_analytics(release_id: str, request: Request):
+    """Return aggregate, private beta route signals without exposing testers."""
+    user = await _current_user(request)
+    _require_admin(user)
+    release = await admin_releases.find_one({"releaseId": release_id}, {"_id": 0, "releaseId": 1, "bookId": 1, "version": 1})
+    if release is None:
+        raise HTTPException(status_code=404, detail={"error": "release_not_found"})
+    sessions = await beta_player_sessions.find({"releaseId": release_id}, {"_id": 0, "sceneId": 1, "history": 1}).to_list(length=1000)
+    choices: Dict[tuple[str, str], int] = {}
+    current_scenes: Dict[str, int] = {}
+    completed = 0
+    for session in sessions:
+        scene_id = session.get("sceneId")
+        if scene_id is None:
+            completed += 1
+        elif isinstance(scene_id, str):
+            current_scenes[scene_id] = current_scenes.get(scene_id, 0) + 1
+        for event in session.get("history", []):
+            if not isinstance(event, dict):
+                continue
+            from_scene, choice_id = event.get("sceneId"), event.get("choiceId")
+            if isinstance(from_scene, str) and isinstance(choice_id, str):
+                key = (from_scene, choice_id)
+                choices[key] = choices.get(key, 0) + 1
+    return {"format": "vampires-choice-private-beta-route-analytics/v1", "generatedAt": _now(), "release": release, "summary": {"sessionCount": len(sessions), "completedSessionCount": completed, "activeSessionCount": len(sessions) - completed, "choiceEventCount": sum(choices.values())}, "topChoices": [{"sceneId": scene_id, "choiceId": choice_id, "count": count} for (scene_id, choice_id), count in sorted(choices.items(), key=lambda entry: (-entry[1], entry[0]))[:100]], "currentScenes": [{"sceneId": scene_id, "count": count} for scene_id, count in sorted(current_scenes.items(), key=lambda entry: (-entry[1], entry[0]))[:100]], "privacy": {"testerIdentitiesIncluded": False, "playerSavesTouched": 0, "published": False}, "note": "Aggregate private-beta telemetry for editorial review only. It cannot publish or alter player progress."}
+
+
 @api.patch("/admin/releases/{release_id}/beta-feedback/{feedback_id}")
 async def triage_admin_beta_feedback(release_id: str, feedback_id: str, request: Request, payload: BetaFeedbackTriageInput):
     user = await _current_user(request)
