@@ -110,9 +110,9 @@ export interface AdminReleaseVersion {
 export type AdminReleaseSnapshot = AdminReleaseVersion & { snapshot: AdminDraft; playerFacing: false; published: false };
 export interface StagedReleasePreview { format: string; environment: 'staging-preview'; playerFacing: true; published: false; release: AdminReleaseVersion; snapshot: AdminDraft; note: string; }
 export interface StagedPreviewAudit { kind: 'cost' | 'effect'; target: string; before: number; delta: number; after: number; }
-export interface StagedPreviewSession { sessionId: string; sessionToken?: string; bookId: string; releaseId: string; contentVersion: number; sceneId: string | null; stats: Record<string, number>; history: Array<{ sceneId: string; choiceId: string; audit: StagedPreviewAudit[]; at: string }>; revision: number; createdAt: string; updatedAt: string; expiresAt: string; stagingOnly: true; }
+export interface StagedPreviewSession { sessionId: string; sessionToken?: string; bookId: string; releaseId: string; contentVersion: number; sceneId: string | null; stats: Record<string, number>; flags: Record<string, boolean>; history: Array<{ sceneId: string; choiceId: string; audit: StagedPreviewAudit[]; at: string }>; revision: number; createdAt: string; updatedAt: string; expiresAt: string; stagingOnly: true; }
 export interface BetaReleasePreview { format: string; environment: 'beta'; release: AdminReleaseVersion; snapshot: AdminDraft; note: string; }
-export interface BetaPlayerSession { sessionId: string; bookId: string; releaseId: string; contentVersion: number; sceneId: string | null; stats: Record<string, number>; history: Array<{ sceneId: string; choiceId: string; audit: StagedPreviewAudit[]; at: string }>; revision: number; createdAt: string; updatedAt: string; betaOnly: true; }
+export interface BetaPlayerSession { sessionId: string; bookId: string; releaseId: string; contentVersion: number; sceneId: string | null; stats: Record<string, number>; flags: Record<string, boolean>; history: Array<{ sceneId: string; choiceId: string; audit: StagedPreviewAudit[]; at: string }>; revision: number; createdAt: string; updatedAt: string; betaOnly: true; }
 export interface BetaDecision { decision: 'continue_testing' | 'ready_for_release_review'; note: string; decidedAt: string; decidedBy: string; openFeedbackCount: number; playerFacing: false; published: false; }
 export interface PublicationApproval { checksum: string; version: number; note: string; approvedAt: string; approvedBy: string; playerFacing: false; published: false; }
 export interface CatalogueRegistration { candidateId: string; releaseId: string; bookId: string; releaseVersion: number; checksum: string; status: 'registered' | 'invalidated' | 'withdrawn'; registeredAt: string; registeredBy: string; registrationRevision: number; playerFacing: false; published: false; note: string; }
@@ -131,8 +131,10 @@ export interface AdminChoice {
   nextSceneId?: string | null;
   effectsNotes: string;
   conditions?: AdminCondition[];
+  requiredFlags?: Record<string, boolean>;
   costs?: AdminEffect[];
   effects?: AdminEffect[];
+  setFlags?: Record<string, boolean>;
 }
 export interface AdminEffect { target: string; delta: number; }
 export interface AdminCondition { target: string; operator: 'gte' | 'lte' | 'eq'; value: number; }

@@ -75,6 +75,16 @@ def _condition_matches(state: Dict[str, Any], condition: Any) -> bool:
     return True
 
 
+def _required_flags_match(state: Dict[str, Any], required_flags: Any) -> bool:
+    """Safely evaluate the compact trusted story-flag contract."""
+    if required_flags is None:
+        return True
+    if not isinstance(required_flags, dict):
+        return False
+    flags = state.get("flags", {})
+    return isinstance(flags, dict) and all(type(key) is str and flags.get(key) == expected for key, expected in required_flags.items())
+
+
 def _unlock(state: Dict[str, Any], achievement_id: str) -> List[str]:
     """Idempotent unlock. Returns [id] if newly unlocked, else []."""
     if achievement_id and achievement_id not in state["achievements"]:
@@ -112,7 +122,7 @@ def apply_choice(
     choice = scene["choices"].get(choice_id)
     if choice is None:
         raise InvalidChoice(f"unknown choice '{choice_id}' on scene '{from_scene_id}'")
-    if not _condition_matches(state, choice.get("condition")):
+    if not _condition_matches(state, choice.get("condition")) or not _required_flags_match(state, choice.get("requiredFlags")):
         raise InvalidChoice(f"conditions not met for choice '{choice_id}' on scene '{from_scene_id}'")
 
     effects = choice.get("effects") or {}
