@@ -26,10 +26,10 @@ function v2Save(partial: Partial<PlayerState> = {}): any {
   };
 }
 
-describe('save migration v2 → v3', () => {
-  it('adds completedBooks and stamps version 3 + contentVersions', () => {
+describe('save migration v2 → v4', () => {
+  it('adds completedBooks and contentVersions, then stamps the current schema version', () => {
     const migrated = migrateAndMerge(v2Save());
-    expect(migrated.version).toBe(3);
+    expect(migrated.version).toBe(4);
     expect(Array.isArray(migrated.progress.completedBooks)).toBe(true);
     expect(migrated.contentVersions?.book1).toBe(1);
   });

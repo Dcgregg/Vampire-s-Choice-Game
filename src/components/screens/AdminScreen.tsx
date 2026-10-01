@@ -1,67 +1,101 @@
 import React from 'react';
-import { ShieldCheck, BookOpen, LockKeyhole, Plus, Save, Send, ClipboardCheck } from 'lucide-react';
-import { AdminCatalog, AdminDraft, AdminDraftInput, createAdminDraft, createSampleAdminDraft, getAdminCatalog, getAdminDrafts, requestAdminDraftReview, updateAdminDraft, validateAdminDraft } from '../../sync/cloudClient';
-import { ManualSceneEditor } from './ManualSceneEditor';
+import { Archive, BadgeCheck, BookOpen, ClipboardCheck, Copy, FileDown, Library, LockKeyhole, Plus, Save, Send, ShieldCheck, Sparkles, Wrench } from 'lucide-react';
+import { AdminCatalog, AdminDraft, AdminDraftInput, AdminPublishedBook, approveAdminDraftRelease, createAdminDraft, createBookTwoStarterDraft, createDraftFromPublishedBook, createSampleAdminDraft, getAdminCatalog, getAdminDraftReviewExport, getAdminDrafts, getAdminPublishedBooks, markAdminDraftPrivate, requestAdminDraftReview, updateAdminDraft, validateAdminDraft } from '../../sync/cloudClient';
+import { AiDraftGenerator } from './AiDraftGenerator';
+import { BookJsonImport } from './BookJsonImport';
+import { ApprovalHistory } from './ApprovalHistory';
 import { DraftPlaytest } from './DraftPlaytest';
+import { DraftLifecycleControls } from './DraftLifecycleControls';
+import { ManualSceneEditor } from './ManualSceneEditor';
+import { StoryContextEditor } from './StoryContextEditor';
+import { CharacterCatalogue } from './CharacterCatalogue';
+import { ReleaseRegistry } from './ReleaseRegistry';
+import { PlaytestSettings } from './PlaytestSettings';
+import { DesktopAdminPanel } from './DesktopAdminPanel';
+import { BetaRouteAnalytics } from './BetaRouteAnalytics';
+import { PublishWorkflow } from './PublishWorkflow';
 
-const emptyDraft: AdminDraftInput = { bookId: 'book2', title: '', synopsis: '', branchNotes: '' };
+const emptyDraft: AdminDraftInput = { bookId: 'book2', title: '', synopsis: '', branchNotes: '', storyValues: {}, relationshipValues: {}, playtestValues: { humanity: 100, bloodCoins: 250 } };
+type Module = 'drafts' | 'editor' | 'publish' | 'live' | 'tools';
+const modules: Array<{ id: Module; label: string; icon: React.ElementType }> = [
+  { id: 'drafts', label: 'Drafts', icon: BookOpen }, { id: 'editor', label: 'Editor', icon: ClipboardCheck },
+  { id: 'publish', label: 'Publish', icon: Send }, { id: 'live', label: 'Live books', icon: Library },
+  { id: 'tools', label: 'Authoring tools', icon: Wrench },
+];
+
+function saveReviewFile(draft: AdminDraft, review: unknown) {
+  const slug = draft.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'draft';
+  const url = URL.createObjectURL(new Blob([JSON.stringify(review, null, 2)], { type: 'application/json' }));
+  const link = document.createElement('a'); link.href = url; link.download = `${draft.bookId}-${slug}-review.json`; link.click(); URL.revokeObjectURL(url);
+}
+
+const Panel: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => <DesktopAdminPanel title={title}>{children}</DesktopAdminPanel>;
 
 export const AdminScreen: React.FC = () => {
   const [catalog, setCatalog] = React.useState<AdminCatalog | null | undefined>(undefined);
   const [drafts, setDrafts] = React.useState<AdminDraft[] | null | undefined>(undefined);
+  const [published, setPublished] = React.useState<AdminPublishedBook[]>([]);
   const [selected, setSelected] = React.useState<AdminDraft | null>(null);
   const [form, setForm] = React.useState<AdminDraftInput>(emptyDraft);
+  const [module, setModule] = React.useState<Module>('drafts');
   const [saving, setSaving] = React.useState(false);
   const [notice, setNotice] = React.useState<string | null>(null);
-  React.useEffect(() => {
-    void Promise.all([getAdminCatalog(), getAdminDrafts()])
-      .then(([nextCatalog, nextDrafts]) => { setCatalog(nextCatalog); setDrafts(nextDrafts); })
-      .catch(() => { setCatalog(null); setDrafts(null); });
+
+  const refresh = React.useCallback(async () => {
+    const [nextCatalog, nextDrafts, nextPublished] = await Promise.all([getAdminCatalog(), getAdminDrafts(), getAdminPublishedBooks()]);
+    setCatalog(nextCatalog); setDrafts(nextDrafts); setPublished(nextPublished);
   }, []);
-  const chooseDraft = (draft: AdminDraft | null) => {
+  React.useEffect(() => { void refresh().catch(() => { setCatalog(null); setDrafts(null); }); }, [refresh]);
+
+  const choose = (draft: AdminDraft | null) => {
     setSelected(draft);
-    setForm(draft ? { bookId: draft.bookId, title: draft.title, synopsis: draft.synopsis, branchNotes: draft.branchNotes } : emptyDraft);
+    setForm(draft ? { bookId: draft.bookId, title: draft.title, synopsis: draft.synopsis, branchNotes: draft.branchNotes, storyValues: draft.storyValues ?? {}, relationshipValues: draft.relationshipValues ?? {}, playtestValues: draft.playtestValues ?? { humanity: 100, bloodCoins: 250 } } : emptyDraft);
     setNotice(null);
   };
-  const save = async () => {
-    if (!form.title.trim()) { setNotice('Give the draft a title first.'); return; }
-    setSaving(true); setNotice(null);
-    try {
-      const saved = selected
-        ? await updateAdminDraft(selected.draftId, form, selected.revision)
-        : await createAdminDraft(form);
-      setDrafts((items) => [saved, ...(items ?? []).filter((item) => item.draftId !== saved.draftId)]);
-      chooseDraft(saved); setNotice('Draft saved. It is not published to players.');
-    } catch (error) {
-      setNotice(error instanceof Error && error.message === 'draft_conflict' ? 'This draft changed elsewhere. Reload before saving again.' : 'Could not save the draft.');
-    } finally { setSaving(false); }
+  const store = (draft: AdminDraft) => {
+    setDrafts((items) => [draft, ...(items ?? []).filter((item) => item.draftId !== draft.draftId)]);
+    choose(draft);
   };
-  const createSample = async () => {
-    setSaving(true); setNotice(null);
-    try {
-      const saved = await createSampleAdminDraft();
-      setDrafts((items) => [saved, ...(items ?? [])]); chooseDraft(saved);
-      setNotice('Sample story created. It is a private draft, not player-facing content.');
-    } catch { setNotice('Could not create the sample story.'); } finally { setSaving(false); }
+  const run = async (action: () => Promise<void>, fallback: string) => { setSaving(true); setNotice(null); try { await action(); } catch { setNotice(fallback); } finally { setSaving(false); } };
+  const save = () => {
+    if (!form.title.trim()) { setNotice('Add a title before saving.'); return; }
+    void run(async () => { const result = selected ? await updateAdminDraft(selected.draftId, form, selected.revision) : await createAdminDraft(form); store(result); setModule('editor'); setNotice('Saved as a private draft. Nothing is live until you publish it.'); }, 'Could not save. Check required fields and try again.');
   };
-  const requestReview = async () => {
-    if (!selected) return;
-    setSaving(true); setNotice(null);
-    try {
-      const saved = await requestAdminDraftReview(selected.draftId);
-      setDrafts((items) => [saved, ...(items ?? []).filter((item) => item.draftId !== saved.draftId)]);
-      chooseDraft(saved); setNotice('Marked ready for review. It is still not published to players.');
-    } catch { setNotice('Could not update the review status.'); } finally { setSaving(false); }
-  };
-  const checkDraft = async () => {
-    if (!selected) return;
-    setSaving(true); setNotice(null);
-    try {
-      const result = await validateAdminDraft(selected.draftId);
-      setNotice(result.valid ? 'Draft passes the current readiness checks.' : result.issues.map((issue) => issue.message).join(' '));
-    } catch { setNotice('Could not run the draft check.'); } finally { setSaving(false); }
-  };
-  if (catalog === undefined) return <div className="p-8 text-stone-400">Loading admin catalogue…</div>;
+  const newDraft = () => { choose(null); setModule('editor'); };
+  const createSample = () => void run(async () => { store(await createSampleAdminDraft()); setModule('editor'); setNotice('Sample story created as a private draft.'); }, 'Could not create the sample story.');
+  const createBookTwoStarter = () => void run(async () => { store(await createBookTwoStarterDraft()); setModule('editor'); setNotice('Book II starter created as a private draft.'); }, 'Could not create the Book II starter.');
+  const check = () => { if (selected) void run(async () => { const result = await validateAdminDraft(selected.draftId); setNotice(result.valid ? 'Draft passed the current checks.' : result.issues.map((issue) => issue.message).join(' ')); }, 'Could not check the draft.'); };
+  const requestReview = () => { if (selected) void run(async () => { const result = await requestAdminDraftReview(selected.draftId); store(result); setNotice('Marked ready for review. It is not live yet.'); }, 'Could not mark this draft ready for review.'); };
+  const approve = () => { if (selected) void run(async () => { const result = await approveAdminDraftRelease(selected.draftId); store(result); setNotice('Approved. Next, open Publish to prepare and publish it.'); }, 'Approval needs a passing check and ready-for-review status.'); };
+  const markDraft = () => { if (selected) void run(async () => { const result = await markAdminDraftPrivate(selected.draftId); store(result); setNotice('Returned to private draft. Previous approval was cleared.'); }, 'Could not return this to draft.'); };
+  const exportReview = () => { if (selected) void run(async () => { saveReviewFile(selected, await getAdminDraftReviewExport(selected.draftId)); setNotice('Review JSON downloaded.'); }, 'To export, pass Check draft and mark it ready for review.'); };
+  const makeEditable = (bookId: string) => void run(async () => { const draft = await createDraftFromPublishedBook(bookId); store(draft); setNotice('A new private draft was created from the live snapshot. The published edition is unchanged.'); setModule('editor'); }, 'Could not create an editable copy of this live book.');
+  const copyUrl = async (url: string) => { try { await navigator.clipboard.writeText(url); setNotice('Reader URL copied.'); } catch { setNotice(url); } };
+  const removeDraft = (draftId: string) => { setDrafts((items) => (items ?? []).filter((draft) => draft.draftId !== draftId)); if (selected?.draftId === draftId) choose(null); };
+
+  if (catalog === undefined) return <div className="p-8 text-stone-400">Loading admin workspace…</div>;
   if (!catalog) return <div className="mx-auto max-w-md p-10 text-center text-stone-300"><LockKeyhole className="mx-auto h-8 w-8 text-rose-300" /><h1 className="mt-4 font-display text-2xl">Admin access required</h1><p className="mt-2 text-sm text-stone-400">Sign in with an allow-listed administrator account.</p></div>;
-  return <div className="mx-auto max-w-5xl p-6 sm:p-10"><div className="flex items-center gap-3"><ShieldCheck className="h-7 w-7 text-[#e5c158]" /><div><h1 className="font-display text-3xl text-[#f5f0e6]">Story Admin</h1><p className="text-sm text-stone-400">Draft workspace — saved drafts are not player-facing content.</p></div></div><div className="mt-8 grid gap-6 lg:grid-cols-[0.8fr_1.2fr]"><section><h2 className="text-sm font-semibold uppercase tracking-wider text-[#c5a059]">Published catalogue</h2><div className="mt-3 grid gap-3">{catalog.series.sort((a,b) => a.order-b.order).map((ref) => { const book = catalog.books.find((entry) => entry.id === ref.id); return <article key={ref.id} className="rounded-xl border border-white/10 bg-[#150f1f] p-4"><div className="flex items-center justify-between"><div className="flex items-center gap-2"><BookOpen className="h-4 w-4 text-[#c5a059]" /><strong className="text-[#f5f0e6]">Book {ref.order}: {ref.id}</strong></div><span className="text-xs uppercase text-stone-400">{ref.status}</span></div><p className="mt-2 text-sm text-stone-400">{book ? `${book.sceneCount} scenes · content v${book.version}` : 'No bundled content yet'}</p></article>; })}</div><div className="mt-6 flex items-center justify-between"><h2 className="text-sm font-semibold uppercase tracking-wider text-[#c5a059]">Drafts</h2><div className="flex gap-2"><button disabled={saving} onClick={() => void createSample()} className="rounded border border-[#c5a059]/60 px-2 py-1 text-xs text-[#e5c158] disabled:opacity-50">Create sample story</button><button onClick={() => chooseDraft(null)} className="rounded border border-[#c5a059]/60 p-1.5 text-[#e5c158]" title="New draft"><Plus className="h-4 w-4" /></button></div></div><div className="mt-3 grid gap-2">{drafts === undefined ? <p className="text-sm text-stone-400">Loading drafts…</p> : (drafts ?? []).map((draft) => <button key={draft.draftId} onClick={() => chooseDraft(draft)} className={`rounded-lg border p-3 text-left ${selected?.draftId === draft.draftId ? 'border-[#c5a059] bg-[#25182d]' : 'border-white/10 bg-[#150f1f]'}`}><strong className="block text-sm text-[#f5f0e6]">{draft.title}</strong><span className="text-xs text-stone-400">{draft.bookId} · {draft.status === 'ready_for_review' ? 'ready for review' : `v${draft.revision}`}</span></button>)}</div></section><section className="rounded-xl border border-white/10 bg-[#150f1f] p-5"><h2 className="font-display text-xl text-[#f5f0e6]">{selected ? 'Edit draft' : 'New draft'}</h2><label className="mt-4 block text-sm text-stone-300">Book ID<input value={form.bookId} onChange={(e) => setForm({ ...form, bookId: e.target.value })} className="mt-1 w-full rounded border border-white/15 bg-black/20 p-2 text-[#f5f0e6]" /></label><label className="mt-4 block text-sm text-stone-300">Title<input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} className="mt-1 w-full rounded border border-white/15 bg-black/20 p-2 text-[#f5f0e6]" /></label><label className="mt-4 block text-sm text-stone-300">Synopsis<textarea value={form.synopsis} onChange={(e) => setForm({ ...form, synopsis: e.target.value })} rows={5} className="mt-1 w-full rounded border border-white/15 bg-black/20 p-2 text-[#f5f0e6]" /></label><label className="mt-4 block text-sm text-stone-300">Branch notes<textarea value={form.branchNotes} onChange={(e) => setForm({ ...form, branchNotes: e.target.value })} rows={7} className="mt-1 w-full rounded border border-white/15 bg-black/20 p-2 text-[#f5f0e6]" /></label>{notice && <p className="mt-3 text-sm text-[#e5c158]">{notice}</p>}<div className="mt-5 flex flex-wrap gap-3"><button disabled={saving} onClick={() => void save()} className="inline-flex items-center gap-2 rounded bg-[#7d0828] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"><Save className="h-4 w-4" />{saving ? 'Saving…' : 'Save draft'}</button>{selected && <button disabled={saving} onClick={() => void checkDraft()} className="inline-flex items-center gap-2 rounded border border-white/20 px-4 py-2 text-sm font-semibold text-stone-200 disabled:opacity-50"><ClipboardCheck className="h-4 w-4" />Check draft</button>}{selected && selected.status === 'draft' && <button disabled={saving} onClick={() => void requestReview()} className="inline-flex items-center gap-2 rounded border border-[#c5a059]/70 px-4 py-2 text-sm font-semibold text-[#e5c158] disabled:opacity-50"><Send className="h-4 w-4" />Ready for review</button>}</div></section></div>{selected && <><ManualSceneEditor draft={selected} onSaved={(saved) => { setDrafts((items) => [saved, ...(items ?? []).filter((item) => item.draftId !== saved.draftId)]); setSelected(saved); }} /><DraftPlaytest draft={selected} /></>}</div>;
+
+  return <div className="mx-auto max-w-[1500px] p-4 sm:p-8">
+    <header className="flex flex-wrap items-center justify-between gap-4"><div className="flex items-center gap-3"><ShieldCheck className="h-7 w-7 text-[#e5c158]" /><div><h1 className="font-display text-3xl text-[#f5f0e6]">Story Admin</h1><p className="text-sm text-stone-400">Write, review, publish and manage live editions.</p></div></div><button onClick={() => void refresh().catch(() => setNotice('Refresh failed.'))} className="rounded border border-white/15 px-3 py-2 text-sm text-stone-200">Refresh workspace</button></header>
+    <nav aria-label="Admin modules" className="mt-6 flex gap-2 overflow-x-auto border-b border-white/10 pb-3">{modules.map(({ id, label, icon: Icon }) => <button key={id} onClick={() => setModule(id)} aria-current={module === id ? 'page' : undefined} className={`inline-flex shrink-0 items-center gap-2 rounded-lg px-4 py-2 text-sm ${module === id ? 'bg-[#7d0828] font-semibold text-white' : 'border border-white/10 text-stone-300 hover:bg-white/5'}`}><Icon className="h-4 w-4" />{label}{id === 'editor' && selected ? <span className="max-w-32 truncate text-xs opacity-80">· {selected.title}</span> : null}</button>)}</nav>
+    {notice && <p role="status" className="mt-4 rounded border border-[#c5a059]/25 bg-[#150f1f] p-3 text-sm text-[#e5c158]">{notice}</p>}
+
+    {module === 'drafts' && <div className="mt-6 grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
+      <Panel title="Your drafts"><div className="flex flex-wrap gap-2"><button onClick={newDraft} className="inline-flex items-center gap-2 rounded bg-[#7d0828] px-3 py-2 text-sm font-semibold text-white"><Plus className="h-4 w-4" />New draft</button><button onClick={createBookTwoStarter} disabled={saving} className="rounded border border-violet-300/40 px-3 py-2 text-sm text-violet-100">Start Book II</button><button onClick={createSample} disabled={saving} className="rounded border border-[#c5a059]/50 px-3 py-2 text-sm text-[#e5c158]">Create sample</button></div><div className="mt-4 grid gap-2">{drafts === undefined ? <p className="text-sm text-stone-400">Loading drafts…</p> : (drafts ?? []).length === 0 ? <p className="rounded border border-dashed border-white/15 p-5 text-sm text-stone-400">No drafts yet. Start a blank draft, import JSON, or generate one with AI.</p> : (drafts ?? []).map((draft) => <button key={draft.draftId} onClick={() => { choose(draft); setModule('editor'); }} className={`rounded-lg border p-4 text-left ${selected?.draftId === draft.draftId ? 'border-[#c5a059] bg-[#25182d]' : 'border-white/10 bg-[#150f1f]'}`}><span className="flex items-center justify-between gap-3"><strong className="text-[#f5f0e6]">{draft.title || 'Untitled draft'}</strong><span className="text-xs text-stone-400">{draft.status.replaceAll('_', ' ')}</span></span><span className="mt-1 block text-xs text-stone-400">{draft.bookId} · revision {draft.revision} · updated {new Date(draft.updatedAt).toLocaleDateString()}</span></button>)}</div></Panel>
+      <Panel title="Series catalogue"><div className="grid gap-2">{catalog.series.toSorted((a, b) => a.order - b.order).map((ref) => { const book = catalog.books.find((entry) => entry.id === ref.id); return <div key={ref.id} className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-[#150f1f] p-3"><span><strong className="text-sm text-[#f5f0e6]">Book {ref.order}: {book?.subtitle || book?.title || ref.id}</strong><span className="block text-xs text-stone-400">{book ? `${book.sceneCount} scenes · v${book.version}` : 'No bundled content'}</span></span><BookOpen className="h-4 w-4 text-[#c5a059]" /></div>; })}</div></Panel>
+    </div>}
+
+    {module === 'editor' && <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(280px,0.7fr)_minmax(0,1.3fr)]">
+      <Panel title="Draft workspace"><div className="flex flex-wrap gap-2"><button onClick={newDraft} className="rounded bg-[#7d0828] px-3 py-2 text-sm text-white">New</button>{selected && <button onClick={exportReview} disabled={saving} className="inline-flex items-center gap-1 rounded border border-white/15 px-3 py-2 text-sm text-stone-200"><FileDown className="h-4 w-4" />Review JSON</button>}</div><div className="mt-4 grid gap-2">{(drafts ?? []).map((draft) => <button key={draft.draftId} onClick={() => choose(draft)} className={`rounded border p-3 text-left ${selected?.draftId === draft.draftId ? 'border-[#c5a059] bg-[#25182d]' : 'border-white/10 bg-[#150f1f]'}`}><strong className="block text-sm text-[#f5f0e6]">{draft.title}</strong><span className="text-xs text-stone-400">{draft.bookId} · {draft.status.replaceAll('_', ' ')}</span></button>)}</div></Panel>
+      <div className="grid gap-5"><Panel title={selected ? `Edit · ${selected.title}` : 'Create a draft'}><label className="block text-sm text-stone-300">Book ID<input value={form.bookId} onChange={(e) => setForm({ ...form, bookId: e.target.value })} className="mt-1 w-full rounded border border-white/15 bg-black/20 p-2 text-[#f5f0e6]" /></label><label className="mt-3 block text-sm text-stone-300">Title<input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} className="mt-1 w-full rounded border border-white/15 bg-black/20 p-2 text-[#f5f0e6]" /></label><label className="mt-3 block text-sm text-stone-300">Synopsis<textarea value={form.synopsis} onChange={(e) => setForm({ ...form, synopsis: e.target.value })} rows={3} className="mt-1 w-full rounded border border-white/15 bg-black/20 p-2 text-[#f5f0e6]" /></label><label className="mt-3 block text-sm text-stone-300">Story notes<textarea value={form.branchNotes} onChange={(e) => setForm({ ...form, branchNotes: e.target.value })} rows={3} className="mt-1 w-full rounded border border-white/15 bg-black/20 p-2 text-[#f5f0e6]" /></label><StoryContextEditor storyValues={form.storyValues} relationshipValues={form.relationshipValues} onChange={(storyValues, relationshipValues) => setForm({ ...form, storyValues, relationshipValues })} /><PlaytestSettings values={form.playtestValues} onChange={(playtestValues) => setForm({ ...form, playtestValues })} /><ApprovalHistory history={selected?.reviewHistory} /><div className="mt-4 flex flex-wrap gap-2"><button disabled={saving} onClick={save} className="inline-flex items-center gap-2 rounded bg-[#7d0828] px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"><Save className="h-4 w-4" />{saving ? 'Saving…' : 'Save as draft'}</button>{selected && selected.status !== 'draft' && selected.status !== 'archived' && <button disabled={saving} onClick={markDraft} className="rounded border border-amber-300/50 px-3 py-2 text-sm text-amber-100">Mark as draft</button>}{selected && <button disabled={saving} onClick={check} className="rounded border border-white/15 px-3 py-2 text-sm text-stone-200">Check draft</button>}{selected?.status === 'draft' && <button disabled={saving} onClick={requestReview} className="rounded border border-[#c5a059]/60 px-3 py-2 text-sm text-[#e5c158]">Mark ready for review</button>}{selected?.status === 'ready_for_review' && <button disabled={saving} onClick={approve} className="inline-flex items-center gap-2 rounded border border-emerald-400/50 px-3 py-2 text-sm text-emerald-100"><BadgeCheck className="h-4 w-4" />Approve</button>}{selected?.status === 'approved_for_release' && <span className="self-center text-sm text-emerald-200">Approved at revision {selected.reviewApproval?.approvedRevision}</span>}</div></Panel>
+      {selected && selected.status !== 'archived' && <><Panel title="Scene editor"><ManualSceneEditor draft={selected} onSaved={store} /></Panel><Panel title="Private playtest"><div id="private-playtest"><DraftPlaytest draft={selected} /></div></Panel><Panel title="Draft lifecycle"><DraftLifecycleControls draft={selected} onChanged={store} onDeleted={removeDraft} /></Panel></>}</div>
+    </div>}
+
+    {module === 'publish' && <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(260px,0.65fr)_minmax(0,1.35fr)]"><Panel title="Choose a book to publish">{selected ? <div className="mb-4 rounded-lg border border-[#c5a059]/30 bg-[#150f1f] p-4"><strong className="text-[#f5f0e6]">{selected.title}</strong><p className="text-sm text-stone-400">{selected.bookId} · {selected.status.replaceAll('_', ' ')}</p></div> : <p className="mb-4 text-sm text-stone-400">Select a draft to see its publishing steps.</p>}<div className="grid gap-2">{(drafts ?? []).filter((draft) => draft.status !== 'archived').map((draft) => <button key={draft.draftId} onClick={() => choose(draft)} className={`rounded border p-3 text-left ${selected?.draftId === draft.draftId ? 'border-[#c5a059] bg-[#25182d]' : 'border-white/10 bg-[#150f1f]'}`}><strong className="block text-sm text-[#f5f0e6]">{draft.title}</strong><span className="text-xs text-stone-400">{draft.bookId} · {draft.status.replaceAll('_', ' ')}</span></button>)}</div></Panel>{selected && selected.status !== 'archived' ? <div className="grid content-start gap-5"><Panel title="Publish to players"><PublishWorkflow draft={selected} onPreview={() => { setModule('editor'); document.getElementById('private-playtest')?.scrollIntoView({ behavior: 'smooth' }); }} onApproved={approve} onPublished={() => void getAdminPublishedBooks().then(setPublished)} /></Panel><Panel title="Advanced release controls"><ReleaseRegistry draft={selected} onNotice={setNotice} /></Panel></div> : <Panel title="Publishing checklist"><p className="text-stone-300">Choose a draft. The workflow will guide you through preview, review, approval, preparation and the final publish confirmation.</p><ol className="mt-4 list-inside list-decimal space-y-2 text-sm text-stone-400"><li>Save as draft and check it.</li><li>Mark ready for review, then approve.</li><li>Prepare the immutable release.</li><li>Explicitly publish to the player catalogue.</li></ol></Panel>}</div>}
+
+    {module === 'live' && <div className="mt-6 grid gap-6"><Panel title="Published books"><p className="mb-4 text-sm text-stone-400">Live editions are immutable. Use “Edit as draft” to create a new revision; the current player edition stays live until you publish its replacement.</p>{published.length === 0 ? <p className="rounded border border-dashed border-white/15 p-5 text-sm text-stone-400">No books have been published through this workflow yet.</p> : <div className="grid gap-3 md:grid-cols-2">{published.map((book) => <article key={book.bookId} className="rounded-xl border border-emerald-400/25 bg-[#150f1f] p-4"><div className="flex items-start justify-between gap-3"><div><p className="text-xs uppercase tracking-wider text-emerald-200">Live · v{book.releaseVersion}</p><h2 className="mt-1 font-display text-xl text-[#f5f0e6]">{book.title}</h2><p className="mt-1 text-xs text-stone-400">{book.bookId} · published {new Date(book.publishedAt).toLocaleString()}</p></div><BookOpen className="h-5 w-5 text-emerald-200" /></div><label className="mt-4 block text-xs text-stone-400">Public reader URL<input readOnly value={book.readerUrl} className="mt-1 w-full rounded border border-white/15 bg-black/25 p-2 text-xs text-stone-200" /></label><div className="mt-3 flex flex-wrap gap-2"><a href={book.readerUrl} target="_blank" rel="noreferrer" className="rounded border border-emerald-300/50 px-3 py-2 text-sm text-emerald-100">Open reader</a><button onClick={() => void copyUrl(book.readerUrl)} className="inline-flex items-center gap-1 rounded border border-white/15 px-3 py-2 text-sm text-stone-200"><Copy className="h-4 w-4" />Copy URL</button><button disabled={saving} onClick={() => makeEditable(book.bookId)} className="rounded bg-[#7d0828] px-3 py-2 text-sm text-white">Edit as draft</button></div></article>)}</div>}</Panel></div>}
+
+    {module === 'tools' && <div className="mt-6 grid gap-5 xl:grid-cols-2"><Panel title="AI story drafting"><AiDraftGenerator onGenerated={(draft) => { store(draft); setModule('editor'); }} /></Panel><Panel title="Import story JSON"><BookJsonImport onImported={(draft) => { store(draft); setModule('editor'); }} /></Panel><Panel title="Character catalogue"><CharacterCatalogue /></Panel><Panel title="Beta route analytics"><BetaRouteAnalytics /></Panel><Panel title="Workflow guide"><p className="text-sm text-stone-300">AI and imported stories are always private drafts. Every choice should be checked for humanity, blood coin and affinity costs/effects before review.</p></Panel></div>}
+  </div>;
 };

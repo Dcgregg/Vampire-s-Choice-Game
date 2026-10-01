@@ -47,6 +47,8 @@ export interface ChoiceEffect {
   relationshipChanges?: { [characterId: string]: number };
   setFlags?: { [flagKey: string]: boolean | string | number };
   coinsChange?: number;
+  /** Humanity is always clamped to the inclusive 0–100 range. */
+  humanityChange?: number;
   streakIncrement?: boolean;
   achievementId?: string;
   notificationText?: string;
@@ -73,6 +75,8 @@ export interface ChoiceCondition {
   // Currency / numeric variable bounds.
   minCoins?: number;
   maxCoins?: number;
+  minHumanity?: number;
+  maxHumanity?: number;
   // Story progress.
   requiredBook?: string;
   requiredChapter?: number; // player's currentChapter must be >= this
@@ -200,6 +204,8 @@ export interface PlayerState {
   flags: StoryFlagMap;
   progress: PlayerProgress;
   bloodCoins: number;
+  /** Moral / vampiric balance. Always persisted as an integer from 0 to 100. */
+  humanity: number;
   dailyStreak: number;
   lastLoginDate: string;
   achievements: { [achievementId: string]: Achievement };

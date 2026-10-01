@@ -1,11 +1,13 @@
 import React from 'react';
 import { useGameState } from '../../state/useGameState';
-import { User, Flame, Droplet, BookOpen, Key, Compass, Shield, Award } from 'lucide-react';
+import { User, Flame, Droplet, HeartPulse, BookOpen, Key, Compass, Shield, Award, Share2 } from 'lucide-react';
 import { useTrustedProgression } from '../../progression/useTrustedProgression';
+import { shareProgress } from '../../utils/shareProgress';
 
 export const CharacterScreen: React.FC = () => {
   const { state, setScreen } = useGameState();
   const trusted = useTrustedProgression();
+  const [shareNotice, setShareNotice] = React.useState<string | null>(null);
   const player = state.player;
 
   if (!player) {
@@ -57,7 +59,7 @@ export const CharacterScreen: React.FC = () => {
         </p>
 
         {/* Currency & Streak Stats */}
-        <div className="mt-5 grid grid-cols-2 gap-3 border-t border-white/5 pt-4">
+        <div className="mt-5 grid grid-cols-3 gap-3 border-t border-white/5 pt-4">
           <div className="rounded-xl border border-rose-900/40 bg-rose-950/20 p-2.5">
             <div className="flex items-center justify-center gap-1.5 text-xs text-rose-300">
               <Droplet className="w-3.5 h-3.5 fill-rose-600 text-rose-500" />
@@ -66,6 +68,14 @@ export const CharacterScreen: React.FC = () => {
             <span className="text-[10px] text-stone-400 mt-0.5 block">
               {trustedAccount ? 'Confirmed Blood Coins' : 'Blood Coins'}
             </span>
+          </div>
+
+          <div className="rounded-xl border border-violet-900/40 bg-violet-950/20 p-2.5">
+            <div className="flex items-center justify-center gap-1.5 text-xs text-violet-200">
+              <HeartPulse className="w-3.5 h-3.5 text-violet-300" />
+              <span className="font-semibold text-white">{state.humanity}</span>
+            </div>
+            <span className="text-[10px] text-stone-400 mt-0.5 block">Humanity / 100</span>
           </div>
 
           <div className="rounded-xl border border-amber-900/40 bg-amber-950/20 p-2.5">
@@ -108,6 +118,23 @@ export const CharacterScreen: React.FC = () => {
           </div>
         </div>
       </div>
+
+      <section className="rounded-xl border border-rose-300/20 bg-gradient-to-r from-rose-950/30 to-[#120a1a] p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="font-display text-base text-[#f5f0e6]">Share your story progress</h3>
+            <p className="mt-1 text-xs text-stone-400">Share your chapter and discoveries. Your character details and account data stay private.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => { setShareNotice(null); void shareProgress(state).then((result) => setShareNotice(result === 'shared' ? 'Share sheet opened.' : result === 'copied' ? 'Progress summary copied. Paste it into your social post.' : null)).catch(() => setShareNotice('Could not share right now. Please try again.')); }}
+            className="inline-flex items-center gap-2 rounded-lg border border-rose-300/40 bg-rose-950/50 px-4 py-2.5 text-sm font-semibold text-rose-100 transition hover:bg-rose-900/60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#e5c158]"
+          >
+            <Share2 className="h-4 w-4" /> Share progress
+          </button>
+        </div>
+        {shareNotice && <p role="status" className="mt-3 text-xs text-[#e5c158]">{shareNotice}</p>}
+      </section>
 
       {/* Discovered Secrets & Inventory */}
       <div className="rounded-xl border border-white/10 bg-[#120a1a] p-4 space-y-3">

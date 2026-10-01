@@ -15,7 +15,7 @@ const STORAGE_KEY = 'vampires_choice_player_state_v1';
  *        (records which authored book version a save was created/played against,
  *        enabling future content migrations to detect stale saves per book).
  */
-const SAVE_SCHEMA_VERSION = 3;
+const SAVE_SCHEMA_VERSION = 4;
 
 /**
  * Merge saved character data with the current INITIAL_CHARACTERS base.
@@ -55,6 +55,7 @@ export const DEFAULT_PLAYER_STATE: PlayerState = {
     sceneHistory: ['b1_c1_s1'],
   },
   bloodCoins: 250,
+  humanity: 100,
   dailyStreak: 3,
   lastLoginDate: new Date().toISOString().split('T')[0],
   achievements: INITIAL_ACHIEVEMENTS,
@@ -113,6 +114,9 @@ export function migrateAndMerge(parsed: Partial<PlayerState>): PlayerState {
       ...BOOK_VERSIONS,
       ...(parsed.contentVersions || {}),
     },
+    humanity: typeof parsed.humanity === 'number' && Number.isFinite(parsed.humanity)
+      ? Math.max(0, Math.min(100, Math.round(parsed.humanity)))
+      : DEFAULT_PLAYER_STATE.humanity,
     version: SAVE_SCHEMA_VERSION,
   };
 }

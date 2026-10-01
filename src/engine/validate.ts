@@ -26,13 +26,13 @@ export interface ContentSources {
 }
 
 const VALID_CONDITION_KEYS = new Set([
-  'requiredFlags', 'minRelationship', 'relationships', 'minCoins', 'maxCoins',
+  'requiredFlags', 'minRelationship', 'relationships', 'minCoins', 'maxCoins', 'minHumanity', 'maxHumanity',
   'requiredBook', 'requiredChapter', 'visitedScene', 'playerGender',
   'playerOrientation', 'completedBook',
 ]);
 
 const VALID_EFFECT_KEYS = new Set([
-  'relationshipChanges', 'setFlags', 'coinsChange', 'streakIncrement',
+  'relationshipChanges', 'setFlags', 'coinsChange', 'humanityChange', 'streakIncrement',
   'achievementId', 'notificationText',
 ]);
 

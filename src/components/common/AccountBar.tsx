@@ -131,7 +131,7 @@ const PushConflictModal: React.FC = () => {
 };
 
 export const AccountBar: React.FC = () => {
-  const { user, loading, login, logout, conflict, resolveConflict, error, resolving, retryLink, dismissError } = useAuth();
+  const { user, loading, login, logout, conflict, resolveConflict, error, resolving, migrationRequired, importLocalProgress, startFreshAccount, retryLink, dismissError } = useAuth();
   const { setScreen } = useGameState();
   const [isAdmin, setIsAdmin] = React.useState(false);
   React.useEffect(() => { if (!user) { setIsAdmin(false); return; } void getAdminCatalog().then((catalog) => setIsAdmin(Boolean(catalog))).catch(() => setIsAdmin(false)); }, [user]);
@@ -175,7 +175,8 @@ export const AccountBar: React.FC = () => {
             className="flex items-center gap-1.5 rounded-full border border-[#c5a059]/50 bg-[#160e20]/80 px-2.5 py-1 text-[11px] font-semibold text-[#e5c158] backdrop-blur-sm transition-colors hover:bg-[#22142e]"
           >
             <LogOut className="h-3 w-3" />
-            <span className="hidden sm:inline">Sign out</span>
+            <span className="max-w-32 truncate">{user.email}</span>
+            <span className="hidden xl:inline">Sign out</span>
           </button>
           </>
         ) : (
@@ -225,6 +226,20 @@ export const AccountBar: React.FC = () => {
                 {resolving ? 'Working…' : "Keep this device's progress"}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {migrationRequired && user && !conflict && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 p-4" data-testid="new-account-migration-modal">
+          <div className="w-full max-w-sm rounded-2xl border border-[#c5a059]/40 bg-[#120a1a] p-5 text-center shadow-2xl">
+            <h2 className="font-display text-lg font-bold text-[#f5f0e6]">New account: choose your starting point</h2>
+            <p className="mt-2 font-narrative text-sm text-stone-300">Signed in as <strong>{user.email}</strong>. This browser already has a local story, which may belong to another account. It will not be copied unless you choose to import it.</p>
+            <div className="mt-5 space-y-2">
+              <button disabled={resolving} onClick={() => void startFreshAccount()} className="w-full rounded-xl border border-emerald-400/60 bg-emerald-950/30 px-4 py-2.5 text-sm font-semibold text-emerald-100 disabled:opacity-50">{resolving ? 'Working…' : 'Start a fresh account'}</button>
+              <button disabled={resolving} onClick={() => void importLocalProgress()} className="w-full rounded-xl border border-rose-900/60 bg-rose-950/40 px-4 py-2.5 text-sm font-semibold text-rose-200 disabled:opacity-50">{resolving ? 'Working…' : "Import this browser's current story"}</button>
+            </div>
+            <p className="mt-3 text-xs text-stone-500">Starting fresh does not delete any existing cloud save. Import is only for moving this browser’s story into this account.</p>
           </div>
         </div>
       )}

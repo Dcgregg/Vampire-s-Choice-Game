@@ -22,6 +22,7 @@ export function baseState(overrides: Partial<PlayerState> = {}): PlayerState {
       sceneHistory: ['b1_c1_s1'],
     },
     bloodCoins: 100,
+    humanity: 100,
     dailyStreak: 3,
     lastLoginDate: '2026-01-01',
     achievements: structuredClone(INITIAL_ACHIEVEMENTS),
