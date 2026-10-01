@@ -1477,6 +1477,77 @@ async def export_admin_draft_for_review(draft_id: str, request: Request):
     return _review_export(draft)
 
 
+@api.get("/admin/drafts/{draft_id}/publish-readiness")
+async def get_admin_draft_publish_readiness(draft_id: str, request: Request):
+    """One consolidated, read-only release view for the author workflow."""
+    user = await _current_user(request)
+    _require_admin(user)
+    draft = await admin_drafts.find_one({"draftId": draft_id}, {"_id": 0})
+    if draft is None:
+        raise HTTPException(status_code=404, detail={"error": "draft_not_found"})
+    issues = _admin_draft_validation_issues(draft)
+    approval = draft.get("reviewApproval") if draft.get("status") == "approved_for_release" else None
+    release = await admin_releases.find_one({"source.draftId": draft_id, "source.approvedRevision": approval.get("approvedRevision") if isinstance(approval, dict) else None}, {"_id": 0}) if approval else None
+    candidate = await trusted_catalogue_candidates.find_one({"releaseId": release["releaseId"]}, {"_id": 0, "playerBundleCandidate": 0, "trustedContract": 0}) if release else None
+    blockers = [{"code": item.get("code", "draft_validation"), "message": item.get("message", "Draft needs attention.")} for item in issues]
+    if not approval:
+        blockers.append({"code": "editorial_approval_required", "message": "Approve the current draft revision before preparing publication."})
+    compatibility = None
+    if release and release.get("publicationApproval"):
+        compatibility = await inspect_admin_trusted_content_compatibility(release["releaseId"], request)
+        blockers.extend({"code": item["code"], "message": item["message"]} for item in compatibility["issues"] if item["severity"] == "blocking")
+    preflight = await inspect_admin_catalogue_activation_preflight(candidate["candidateId"], request) if candidate else None
+    scene_count = len(draft.get("scenes", []))
+    choice_count = sum(len(scene.get("choices", [])) for scene in draft.get("scenes", []) if isinstance(scene, dict))
+    prepared = bool(candidate and candidate.get("status") == "registered")
+    return {
+        "format": "vampires-choice-publish-readiness/v1", "draftId": draft_id, "bookId": draft["bookId"], "title": draft["title"], "revision": draft["revision"],
+        "status": "ready_to_publish" if prepared and not blockers else "approved" if approval and not blockers else "needs_attention" if issues else "ready_for_approval",
+        "summary": {"sceneCount": scene_count, "choiceCount": choice_count, "graphPassed": not any(item["code"] in {"unknown_scene_target", "unreachable_scenes", "no_terminal_scene", "non_terminating_route"} for item in issues), "tokensPassed": not any("token" in item["code"] for item in issues), "mechanicsPassed": not any("effect" in item["code"] or "condition" in item["code"] for item in issues)},
+        "editorialApproval": approval, "release": _public_admin_release(release) if release else None, "compatibility": compatibility, "candidate": candidate, "activationPreflight": preflight,
+        "blockers": list({item["code"]: item for item in blockers}.values()), "recommendedAction": "publish_confirmation" if prepared and not blockers else "prepare_publication" if approval and not issues else "approve_for_publication" if not issues else "fix_draft",
+        "playerFacing": False, "published": False,
+    }
+
+
+@api.post("/admin/drafts/{draft_id}/prepare-publication")
+async def prepare_admin_draft_publication(draft_id: str, request: Request):
+    """Idempotently orchestrate safe, non-player-facing release preparation.
+
+    This deliberately stops at a registered rollout candidate. The final
+    player-facing runtime activation remains a separate explicit operation.
+    """
+    user = await _current_user(request)
+    _require_admin(user)
+    draft = await admin_drafts.find_one({"draftId": draft_id}, {"_id": 0})
+    if draft is None:
+        raise HTTPException(status_code=404, detail={"error": "draft_not_found"})
+    if draft.get("status") != "approved_for_release" or not isinstance(draft.get("reviewApproval"), dict):
+        raise HTTPException(status_code=409, detail={"error": "draft_not_approved_for_release"})
+    issues = _admin_draft_validation_issues(draft)
+    if issues:
+        raise HTTPException(status_code=422, detail={"error": "draft_not_ready_for_publication", "issues": issues})
+    approved_revision = draft["reviewApproval"]["approvedRevision"]
+    release = await admin_releases.find_one({"source.draftId": draft_id, "source.approvedRevision": approved_revision}, {"_id": 0})
+    if release is None:
+        created = await _create_release_version(draft, user)
+        release = await admin_releases.find_one({"releaseId": created["releaseId"]}, {"_id": 0})
+    if release.get("status") != "staged":
+        now = _now()
+        await admin_releases.update_many({"bookId": release["bookId"], "status": "selected"}, {"$set": {"status": "prepared"}, "$unset": {"selectedAt": "", "selectedBy": ""}})
+        await admin_releases.update_one({"releaseId": release["releaseId"]}, {"$set": {"status": "selected", "selectedAt": now, "selectedBy": user["email"]}})
+        if STAGED_RELEASE_PREVIEW_ENABLED:
+            await admin_releases.update_many({"bookId": release["bookId"], "status": "staged", "releaseId": {"$ne": release["releaseId"]}}, {"$set": {"status": "prepared"}, "$unset": {"stagedAt": "", "stagedBy": ""}})
+            await admin_releases.update_one({"releaseId": release["releaseId"]}, {"$set": {"status": "staged", "stagedAt": now, "stagedBy": user["email"]}})
+    release = await admin_releases.find_one({"releaseId": release["releaseId"]}, {"_id": 0})
+    if not isinstance(release.get("publicationApproval"), dict) or release["publicationApproval"].get("checksum") != release["manifest"]["sha256"]:
+        signoff = {"checksum": release["manifest"]["sha256"], "version": release["version"], "note": "Editorial approval carried from the approved draft revision.", "approvedAt": _now(), "approvedBy": user["email"], "playerFacing": False, "published": False, "workflow": "simplified_publish"}
+        await admin_releases.update_one({"releaseId": release["releaseId"]}, {"$set": {"publicationApproval": signoff}, "$push": {"publicationApprovalHistory": {"$each": [signoff], "$slice": -20}}})
+    registration = await register_admin_catalogue_candidate(release["releaseId"], request)
+    readiness = await get_admin_draft_publish_readiness(draft_id, request)
+    return {"release": _public_admin_release(release), "candidate": registration["candidate"], "readiness": readiness, "playerFacing": False, "published": False, "note": "Preparation completed safely. No player content or player save was changed; a final live-publication activation remains explicit."}
+
+
 @api.get("/admin/releases")
 async def list_admin_release_versions(request: Request):
     """List frozen release candidates; none are served to players."""

@@ -124,6 +124,7 @@ export interface BetaRouteAnalytics { format: 'vampires-choice-private-beta-rout
 export interface PublicationHandoff { format: 'vampires-choice-controlled-publication-handoff/v1'; exportedAt: string; release: AdminReleaseVersion; snapshot: AdminDraft; compatibility: { sourceFormat: string; targetFormat: string; requiresTrustedContentConversion: true; checksum: string; note: string; }; publication: { playerFacing: false; published: false; note: string; }; }
 export interface TrustedContentCompatibility { format: 'vampires-choice-trusted-content-compatibility/v1'; checkedAt: string; releaseId: string; checksum: string; summary: { blockingIssueCount: number; requiredWorkCount: number; supportedEffectCount: number; unsupportedEffectCount: number; eligibleForTrustedConversion: boolean; }; supportedMappings: Record<string, string>; issues: Array<{ severity: 'blocking' | 'required'; code: string; message: string; sceneId?: string; choiceId?: string; target?: string; }>; publication: { playerFacing: false; published: false; note: string; }; }
 export interface NarrativeConversionPreview { format: 'vampires-choice-narrative-conversion-preview/v1'; exportedAt: string; release: AdminReleaseVersion; playerBundleCandidate: unknown; trustedContract: { humanityInitial: number; humanityMin: number; humanityMax: number; choices: Record<string, unknown>; }; warnings: string[]; publication: { playerFacing: false; published: false; note: string; }; }
+export interface PublishReadiness { format: string; draftId: string; bookId: string; title: string; revision: number; status: 'needs_attention' | 'ready_for_approval' | 'approved' | 'ready_to_publish'; summary: { sceneCount: number; choiceCount: number; graphPassed: boolean; tokensPassed: boolean; mechanicsPassed: boolean }; editorialApproval: AdminDraft['reviewApproval'] | null; release: AdminReleaseVersion | null; compatibility: TrustedContentCompatibility | null; candidate: CatalogueRegistration | null; activationPreflight: CatalogueActivationPreflight | null; blockers: Array<{ code: string; message: string }>; recommendedAction: 'fix_draft' | 'approve_for_publication' | 'prepare_publication' | 'publish_confirmation'; playerFacing: false; published: false; }
 
 export interface AdminChoice {
   choiceId: string;
@@ -302,6 +303,16 @@ export async function getAdminDraftReviewExport(draftId: string): Promise<AdminD
   const r = await fetch(`${API_BASE}/admin/drafts/${draftId}/review-export`, { credentials: 'include' });
   if (!r.ok) throw new Error(`getAdminDraftReviewExport failed: ${r.status}`);
   return (await r.json()) as AdminDraftReviewExport;
+}
+export async function getAdminDraftPublishReadiness(draftId: string): Promise<PublishReadiness> {
+  const r = await fetch(`${API_BASE}/admin/drafts/${draftId}/publish-readiness`, { credentials: 'include' });
+  if (!r.ok) throw new Error(`getAdminDraftPublishReadiness failed: ${r.status}`);
+  return (await r.json()) as PublishReadiness;
+}
+export async function prepareAdminDraftPublication(draftId: string): Promise<{ release: AdminReleaseVersion; candidate: CatalogueRegistration; readiness: PublishReadiness; playerFacing: false; published: false; note: string }> {
+  const r = await fetch(`${API_BASE}/admin/drafts/${draftId}/prepare-publication`, { method: 'POST', credentials: 'include' });
+  if (!r.ok) throw new Error(`prepareAdminDraftPublication failed: ${r.status}`);
+  return (await r.json()) as { release: AdminReleaseVersion; candidate: CatalogueRegistration; readiness: PublishReadiness; playerFacing: false; published: false; note: string };
 }
 
 export async function getAdminReleaseVersions(): Promise<AdminReleaseVersion[] | null> {
