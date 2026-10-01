@@ -22,6 +22,7 @@ import { AboutScreen } from './components/screens/AboutScreen';
 import { StagedReleasePreviewScreen } from './components/screens/StagedReleasePreviewScreen';
 import { BetaReleasePlayerScreen } from './components/screens/BetaReleasePlayerScreen';
 import { NarrativeConversionSandbox } from './components/screens/NarrativeConversionSandbox';
+import { PublishedReleasePlayerScreen } from './components/screens/PublishedReleasePlayerScreen';
 
 const MainContent: React.FC = () => {
   const { activeScreen } = useGameState();
@@ -58,10 +59,12 @@ export default function App() {
   const params = new URLSearchParams(window.location.search);
   const stagedBook = params.get('stagedBook');
   const betaBook = params.get('betaBook');
+  const publishedBook = params.get('publishedBook');
   const conversionRelease = params.get('conversionRelease');
   // Preview and beta must never initialise the normal game state or its cloud sync.
   if (stagedBook && /^book[1-9][0-9]*$/.test(stagedBook)) return <div className="min-h-screen bg-[#09070c] text-[#ede5d8] font-sans"><StagedReleasePreviewScreen bookId={stagedBook} /></div>;
   if (betaBook && /^book[1-9][0-9]*$/.test(betaBook)) return <div className="min-h-screen bg-[#09070c] text-[#ede5d8] font-sans"><BetaReleasePlayerScreen bookId={betaBook} /></div>;
+  if (publishedBook && /^book[1-9][0-9]*$/.test(publishedBook)) return <div className="min-h-screen bg-[#09070c] text-[#ede5d8] font-sans"><PublishedReleasePlayerScreen bookId={publishedBook} /></div>;
   if (conversionRelease && /^release_[0-9a-f]{32}$/.test(conversionRelease)) return <div className="min-h-screen bg-[#09070c] text-[#ede5d8] font-sans"><NarrativeConversionSandbox releaseId={conversionRelease} /></div>;
   return (
     <GameStateProvider>

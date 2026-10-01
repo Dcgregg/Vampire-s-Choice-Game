@@ -115,8 +115,9 @@ export interface BetaReleasePreview { format: string; environment: 'beta'; relea
 export interface BetaPlayerSession { sessionId: string; bookId: string; releaseId: string; contentVersion: number; sceneId: string | null; stats: Record<string, number>; flags: Record<string, boolean>; history: Array<{ sceneId: string; choiceId: string; audit: StagedPreviewAudit[]; at: string }>; revision: number; createdAt: string; updatedAt: string; betaOnly: true; }
 export interface BetaDecision { decision: 'continue_testing' | 'ready_for_release_review'; note: string; decidedAt: string; decidedBy: string; openFeedbackCount: number; playerFacing: false; published: false; }
 export interface PublicationApproval { checksum: string; version: number; note: string; approvedAt: string; approvedBy: string; playerFacing: false; published: false; }
-export interface CatalogueRegistration { candidateId: string; releaseId: string; bookId: string; releaseVersion: number; checksum: string; status: 'registered' | 'invalidated' | 'withdrawn'; registeredAt: string; registeredBy: string; registrationRevision: number; playerFacing: false; published: false; note: string; }
-export interface CatalogueActivationPreflight { format: 'vampires-choice-catalogue-activation-preflight/v1'; checkedAt: string; candidate: CatalogueRegistration; checks: Array<{ id: string; passed: boolean; message: string }>; activationReady: false; productionPublished: false; rollbackPlan: { action: string; playerSavesTouched: 0; playerCatalogueChanged: false }; note: string; }
+export interface CatalogueRegistration { candidateId: string; releaseId: string; bookId: string; releaseVersion: number; checksum: string; status: 'registered' | 'invalidated' | 'withdrawn'; registeredAt: string; registeredBy: string; registrationRevision: number; playerFacing: boolean; published: boolean; note: string; }
+export interface CatalogueActivationPreflight { format: 'vampires-choice-catalogue-activation-preflight/v1'; checkedAt: string; candidate: CatalogueRegistration; checks: Array<{ id: string; passed: boolean; message: string }>; activationReady: boolean; productionPublished: boolean; rollbackPlan: { action: string; playerSavesTouched: 0; playerCatalogueChanged: boolean }; note: string; }
+export interface PublishedCatalogueBook { bookId: string; candidateId: string; releaseId: string; releaseVersion: number; checksum: string; publishedAt: string; publishedBy: string; previousCandidateId?: string | null; publicationRevision: number; }
 export interface BetaReadiness { releaseId: string; bookId: string; version: number; enabled: boolean; featureEnabled: boolean; invitedCount: number; sessionCount: number; completedSessionCount: number; feedbackCount: number; openFeedbackCount: number; resolvedFeedbackCount: number; readyForDecision: boolean; decision?: BetaDecision | null; accountSavesTouched: 0; productionPublished: false; }
 export interface BetaFeedback { feedbackId: string; sessionId: string; testerEmail: string; message: string; createdAt: string; status: 'open' | 'resolved'; adminNote: string; resolvedAt?: string | null; resolvedBy?: string | null; }
 export interface BetaReport { format: 'vampires-choice-private-beta-report/v1'; exportedAt: string; release: AdminReleaseVersion; summary: { enabled: boolean; invitedCount: number; sessionCount: number; completedSessionCount: number; feedbackCount: number; openFeedbackCount: number; resolvedFeedbackCount: number; readyForReleaseReview: boolean; decision?: BetaDecision | null; }; feedback: Array<Omit<BetaFeedback, 'sessionId' | 'resolvedBy'>>; publication: { playerFacing: false; published: false; note: string; }; }
@@ -431,6 +432,16 @@ export async function getReleaseCatalogueActivationPreflight(candidateId: string
   const r = await fetch(`${API_BASE}/admin/catalogue-candidates/${candidateId}/activation-preflight`, { credentials: 'include' });
   if (!r.ok) throw new Error(`getReleaseCatalogueActivationPreflight failed: ${r.status}`);
   return (await r.json()) as CatalogueActivationPreflight;
+}
+export async function publishReleaseCatalogueCandidate(candidateId: string, checksum: string): Promise<{ published: PublishedCatalogueBook }> {
+  const r = await fetch(`${API_BASE}/admin/catalogue-candidates/${candidateId}/publish`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: true, checksum }) });
+  if (!r.ok) throw new Error(`publishReleaseCatalogueCandidate failed: ${r.status}`);
+  return (await r.json()) as { published: PublishedCatalogueBook };
+}
+export async function getPublicPlayerCatalogue(): Promise<{ books: PublishedCatalogueBook[] }> {
+  const r = await fetch(`${API_BASE}/player/catalogue`);
+  if (!r.ok) throw new Error(`getPublicPlayerCatalogue failed: ${r.status}`);
+  return (await r.json()) as { books: PublishedCatalogueBook[] };
 }
 
 export async function getStagedReleasePreview(bookId: string): Promise<StagedReleasePreview | null> {

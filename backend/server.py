@@ -85,6 +85,10 @@ beta_release_access = db["beta_release_access"]
 beta_player_sessions = db["beta_player_sessions"]
 beta_feedback = db["beta_feedback"]
 trusted_catalogue_candidates = db["trusted_catalogue_candidates"]
+# The live catalogue is a small, database-backed pointer to an immutable
+# candidate.  It deliberately does not replace the build-time trusted
+# progression registry or mutate any player save documents.
+published_catalogue = db["published_catalogue"]
 
 app = FastAPI(title="Vampire's Choice Cloud Save API")
 auth_logger = logging.getLogger("vampires_choice.auth")
@@ -139,6 +143,7 @@ async def _ensure_indexes():
     # This audit collection is deliberately separate from the runtime player catalogue.
     await trusted_catalogue_candidates.create_index("releaseId", unique=True)
     await trusted_catalogue_candidates.create_index([("bookId", 1), ("registeredAt", -1)])
+    await published_catalogue.create_index("bookId", unique=True)
     await admin_drafts.create_index([("bookId", 1), ("updatedAt", -1)])
     await ensure_trusted_progression_indexes(
         activation_value=TRUSTED_PROGRESSION_ACTIVATION,
@@ -2133,11 +2138,7 @@ async def withdraw_admin_catalogue_candidate(candidate_id: str, request: Request
 
 @api.get("/admin/catalogue-candidates/{candidate_id}/activation-preflight")
 async def inspect_admin_catalogue_activation_preflight(candidate_id: str, request: Request):
-    """Generate a read-only activation and rollback plan for a candidate.
-
-    It deliberately cannot activate a player-facing route. The final public
-    registry integration remains a separately authorised implementation step.
-    """
+    """Check whether a frozen candidate can be explicitly made public."""
     user = await _current_user(request)
     _require_admin(user)
     if not re.fullmatch(r"candidate_[0-9a-f]{32}", candidate_id):
@@ -2154,9 +2155,95 @@ async def inspect_admin_catalogue_activation_preflight(candidate_id: str, reques
         {"id": "candidate_registered", "passed": registered, "message": "Candidate remains registered and has not been withdrawn or invalidated."},
         {"id": "checksum_approval", "passed": matching_approval, "message": "The immutable release and controlled approval still match the candidate checksum."},
         {"id": "trusted_compatibility", "passed": no_blockers, "message": "The recorded trusted-content compatibility report has no blockers."},
-        {"id": "public_runtime_boundary", "passed": False, "message": "Public runtime registration is intentionally not implemented by this preflight."},
+        {"id": "public_runtime_boundary", "passed": True, "message": "The runtime catalogue can pin this immutable candidate without changing existing player saves."},
     ]
-    return {"format": "vampires-choice-catalogue-activation-preflight/v1", "checkedAt": _now(), "candidate": candidate, "checks": checks, "activationReady": False, "productionPublished": False, "rollbackPlan": {"action": "withdraw candidate or select a prior immutable candidate before a future runtime activation", "playerSavesTouched": 0, "playerCatalogueChanged": False}, "note": "Read-only activation preflight. It cannot publish, register player content, or alter player saves."}
+    ready = all(check["passed"] for check in checks)
+    return {"format": "vampires-choice-catalogue-activation-preflight/v1", "checkedAt": _now(), "candidate": candidate, "checks": checks, "activationReady": ready, "productionPublished": candidate.get("published") is True, "rollbackPlan": {"action": "select a prior immutable candidate for this book, or unpublish it", "playerSavesTouched": 0, "playerCatalogueChanged": True}, "note": "Read-only preflight. A separate confirmed action is required to expose this version in the public runtime catalogue."}
+
+
+def _public_catalogue_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
+    return {key: entry[key] for key in ("bookId", "candidateId", "releaseId", "releaseVersion", "checksum", "publishedAt", "publishedBy", "previousCandidateId", "publicationRevision") if key in entry}
+
+
+@api.post("/admin/catalogue-candidates/{candidate_id}/publish")
+async def publish_admin_catalogue_candidate(candidate_id: str, request: Request):
+    """Explicitly activate one checksum-bound candidate in the public catalogue.
+
+    This only changes the published catalogue pointer. Candidate and release
+    snapshots remain immutable, and account/player saves are not read or
+    written by this endpoint.
+    """
+    user = await _current_user(request)
+    _require_admin(user)
+    if not re.fullmatch(r"candidate_[0-9a-f]{32}", candidate_id):
+        raise HTTPException(status_code=404, detail={"error": "catalogue_candidate_not_found"})
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict) or body.get("confirm") is not True:
+        raise HTTPException(status_code=422, detail={"error": "publication_confirmation_required"})
+    candidate = await trusted_catalogue_candidates.find_one({"candidateId": candidate_id}, {"_id": 0})
+    if candidate is None:
+        raise HTTPException(status_code=404, detail={"error": "catalogue_candidate_not_found"})
+    if body.get("checksum") != candidate.get("checksum"):
+        raise HTTPException(status_code=409, detail={"error": "publication_checksum_mismatch"})
+    release = await admin_releases.find_one({"releaseId": candidate["releaseId"]}, {"_id": 0})
+    approved = bool(release and isinstance(release.get("publicationApproval"), dict) and release["publicationApproval"].get("checksum") == candidate["checksum"] and release["manifest"]["sha256"] == candidate["checksum"])
+    compatible = candidate.get("compatibility", {}).get("blockingIssueCount") == 0
+    if candidate.get("status") != "registered" or not approved or not compatible:
+        raise HTTPException(status_code=409, detail={"error": "publication_preflight_failed"})
+    now = _now()
+    previous = await published_catalogue.find_one({"bookId": candidate["bookId"]}, {"_id": 0})
+    entry = {"bookId": candidate["bookId"], "candidateId": candidate_id, "releaseId": candidate["releaseId"], "releaseVersion": candidate["releaseVersion"], "checksum": candidate["checksum"], "playerBundle": candidate["playerBundleCandidate"], "trustedContract": candidate["trustedContract"], "publishedAt": now, "publishedBy": user["email"], "previousCandidateId": previous.get("candidateId") if previous else None, "publicationRevision": (previous.get("publicationRevision", 0) + 1) if previous else 1}
+    await published_catalogue.replace_one({"bookId": candidate["bookId"]}, entry, upsert=True)
+    await trusted_catalogue_candidates.update_one({"candidateId": candidate_id}, {"$set": {"published": True, "playerFacing": True, "publishedAt": now, "publishedBy": user["email"]}, "$push": {"history": {"$each": [{"action": "published", "at": now, "by": user["email"], "checksum": candidate["checksum"]}], "$slice": -20}}})
+    return {"published": _public_catalogue_entry(entry), "playerSavesTouched": 0, "note": "This immutable release is now available through the public player catalogue. Existing player saves were not changed."}
+
+
+@api.post("/admin/catalogue/{book_id}/rollback")
+async def rollback_published_catalogue_book(book_id: str, request: Request):
+    """Point a live book back to a prior immutable candidate or unpublish it."""
+    user = await _current_user(request)
+    _require_admin(user)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict) or body.get("confirm") is not True:
+        raise HTTPException(status_code=422, detail={"error": "rollback_confirmation_required"})
+    active = await published_catalogue.find_one({"bookId": book_id}, {"_id": 0})
+    if active is None:
+        raise HTTPException(status_code=404, detail={"error": "published_book_not_found"})
+    target_id = body.get("candidateId")
+    if target_id is None:
+        await published_catalogue.delete_one({"bookId": book_id})
+        action = "unpublished"
+    else:
+        target = await trusted_catalogue_candidates.find_one({"candidateId": target_id, "bookId": book_id}, {"_id": 0})
+        if target is None or target.get("compatibility", {}).get("blockingIssueCount") != 0:
+            raise HTTPException(status_code=409, detail={"error": "rollback_candidate_unavailable"})
+        now = _now()
+        replacement = {"bookId": book_id, "candidateId": target_id, "releaseId": target["releaseId"], "releaseVersion": target["releaseVersion"], "checksum": target["checksum"], "playerBundle": target["playerBundleCandidate"], "trustedContract": target["trustedContract"], "publishedAt": now, "publishedBy": user["email"], "previousCandidateId": active.get("candidateId"), "publicationRevision": active.get("publicationRevision", 0) + 1}
+        await published_catalogue.replace_one({"bookId": book_id}, replacement, upsert=True)
+        action = "rolled_back"
+    await trusted_catalogue_candidates.update_one({"candidateId": active["candidateId"]}, {"$set": {"published": False, "playerFacing": False}, "$push": {"history": {"$each": [{"action": action, "at": _now(), "by": user["email"]}], "$slice": -20}}})
+    return {"action": action, "bookId": book_id, "playerSavesTouched": 0, "note": "The public catalogue changed; immutable release snapshots and all player saves remain intact."}
+
+
+@api.get("/player/catalogue")
+async def public_player_catalogue():
+    """Public, version-pinned listing used by the isolated live release reader."""
+    entries = await published_catalogue.find({}, {"_id": 0, "playerBundle": 0, "trustedContract": 0}).sort("bookId", 1).to_list(length=100)
+    return {"books": [_public_catalogue_entry(entry) for entry in entries], "format": "vampires-choice-public-catalogue/v1"}
+
+
+@api.get("/player/catalogue/{book_id}")
+async def public_player_catalogue_book(book_id: str):
+    entry = await published_catalogue.find_one({"bookId": book_id}, {"_id": 0})
+    if entry is None:
+        raise HTTPException(status_code=404, detail={"error": "published_book_not_found"})
+    return {"published": _public_catalogue_entry(entry), "playerBundle": entry["playerBundle"], "trustedContract": entry["trustedContract"], "playerSavesTouched": 0, "note": "This is an immutable, version-pinned public story release. Existing player saves remain separate."}
 
 
 @api.put("/admin/releases/{release_id}/beta-access")
