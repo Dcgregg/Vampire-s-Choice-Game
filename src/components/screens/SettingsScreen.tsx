@@ -29,7 +29,7 @@ export const SettingsScreen: React.FC = () => {
           Manuscript Settings
         </h2>
         <p className="font-narrative italic text-xs text-[#d6cbbe] mt-1">
-          Customize reading comfort, ambience, and local prototype state.
+          Customize reading comfort, ambience, and player preferences.
         </p>
       </div>
 
@@ -115,7 +115,7 @@ export const SettingsScreen: React.FC = () => {
           <span>Local Data Management</span>
         </div>
         <p className="text-xs text-stone-400 leading-relaxed">
-          All prototype state (protagonist, story flags, affinities, achievements, and currency) is stored securely in your browser’s local storage.
+          A local copy of your protagonist, story flags, affinities, achievements, and currency is kept on this device.
         </p>
 
         {resetSuccess ? (
@@ -169,7 +169,7 @@ export const SettingsScreen: React.FC = () => {
 
       {/* Architecture Info */}
       <div className="rounded-xl border border-white/5 bg-black/40 p-4 text-center text-xs text-stone-500 space-y-1">
-        <p className="font-interface font-medium text-stone-400">Vampire's Choice Prototype v1.0.0</p>
+        <p className="font-interface font-medium text-stone-400">Vampire's Choice · v1.0.0</p>
         <p>Gothic Narrative Engine • Modular React + TypeScript Architecture</p>
       </div>
     </div>
