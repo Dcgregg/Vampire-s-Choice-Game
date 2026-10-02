@@ -761,10 +761,16 @@ def _import_book_json(content: Dict[str, Any]) -> Dict[str, Any]:
         for choice_index, choice in enumerate(scene.get("choices", []) if isinstance(scene.get("choices", []), list) else []):
             if not isinstance(choice, dict):
                 continue
+            raw_effects = choice.get("effects", {}) if isinstance(choice.get("effects", {}), dict) else {}
+            numeric_effects = []
+            for character_id, delta in (raw_effects.get("relationshipChanges", {}) if isinstance(raw_effects.get("relationshipChanges", {}), dict) else {}).items():
+                if re.fullmatch(r"[A-Za-z0-9_-]{1,80}", str(character_id)) and type(delta) is int:
+                    numeric_effects.append({"target": f"affinity.{character_id}", "delta": delta})
+            for target, raw_delta in (("bloodCoins", raw_effects.get("coinsChange")), ("humanity", raw_effects.get("humanityChange"))):
+                if type(raw_delta) is int and raw_delta:
+                    numeric_effects.append({"target": target, "delta": raw_delta})
             notes = choice.get("consequencesSummary", "")
-            if choice.get("effects"):
-                notes = f"{notes}\nEffects: {_json.dumps(choice['effects'], separators=(',', ':'))}".strip()
-            choices.append({"choiceId": choice.get("id", f"choice-{choice_index + 1}"), "text": choice.get("text", ""), "nextSceneId": None if choice.get("endsBook") else choice.get("nextSceneId"), "effectsNotes": notes[:1000]})
+            choices.append({"choiceId": choice.get("id", f"choice-{choice_index + 1}"), "text": choice.get("text", ""), "nextSceneId": None if choice.get("endsBook") else choice.get("nextSceneId"), "effectsNotes": notes[:1000], "requiredFlags": choice.get("requiredFlags", {}), "conditions": choice.get("conditions", []), "costs": choice.get("costs", []), "effects": numeric_effects, "setFlags": raw_effects.get("setFlags", {})})
         dialogue = scene.get("dialogue", []) if isinstance(scene.get("dialogue"), list) else []
         converted.append({"sceneId": scene.get("id", f"scene-{index + 1}"), "chapterNumber": scene.get("chapterNumber", 1), "title": scene.get("sceneTitle", scene.get("title", "")), "body": "\n\n".join(body_parts), "dialogue": dialogue, "choices": choices})
     try:
@@ -1586,6 +1592,20 @@ async def create_draft_from_published_book(book_id: str, request: Request):
     doc = {"draftId": f"draft_{uuid.uuid4().hex}", "bookId": snapshot["bookId"], "title": snapshot["title"], "synopsis": snapshot.get("synopsis", ""), "branchNotes": snapshot.get("branchNotes", ""), "storyValues": snapshot.get("storyValues", {}), "relationshipValues": snapshot.get("relationshipValues", {}), "playtestValues": snapshot.get("playtestValues", {"humanity": 100, "bloodCoins": 250}), "scenes": snapshot.get("scenes", []), "basedOnReleaseId": release["releaseId"], "revision": 1, "status": "draft", "createdAt": now, "updatedAt": now, "updatedBy": user["email"]}
     await admin_drafts.insert_one(doc)
     return _public_admin_draft(doc)
+
+
+@api.get("/admin/published-books/{book_id}/export-json")
+async def export_admin_published_book_json(book_id: str, request: Request):
+    """Export the complete immutable published authoring snapshot for review."""
+    user = await _current_user(request)
+    _require_admin(user)
+    active = await published_catalogue.find_one({"bookId": book_id}, {"_id": 0, "releaseId": 1, "releaseVersion": 1, "checksum": 1})
+    if active is None:
+        raise HTTPException(status_code=404, detail={"error": "published_book_not_found"})
+    release = await admin_releases.find_one({"releaseId": active["releaseId"]}, {"_id": 0, "snapshot": 1, "releaseId": 1, "bookId": 1, "version": 1})
+    if release is None:
+        raise HTTPException(status_code=409, detail={"error": "published_snapshot_not_found"})
+    return {"format": "vampires-choice-complete-book-json/v1", "exportedAt": _now(), "book": release["snapshot"], "release": {"releaseId": release["releaseId"], "bookId": release["bookId"], "version": release["version"], "checksum": active["checksum"]}}
 
 
 @api.post("/admin/drafts/{draft_id}/prepare-publication")

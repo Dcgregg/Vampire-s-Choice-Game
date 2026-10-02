@@ -33,6 +33,8 @@ export const CharacterScreen: React.FC = () => {
     ? Object.keys(trusted.confirmedAchievements || {}).length
     : Object.values(state.achievements).filter((a) => a.unlockedAt).length;
   const displayedCoins = trustedAccount ? trusted.confirmedCoins ?? '—' : state.bloodCoins;
+  const customRelics = Object.entries(state.flags).filter(([key, value]) => key.startsWith('relic.') && value === true);
+  const protections = Object.entries(state.flags).filter(([key, value]) => key.startsWith('protection.') && value === true);
 
   return (
     <div className="mx-auto max-w-lg px-4 py-6 pb-24 space-y-5">
@@ -174,7 +176,10 @@ export const CharacterScreen: React.FC = () => {
             </div>
           )}
 
-          {!state.flags.hasSilverKey && !state.flags.acceptedSignet && !state.flags.hasPoisonVial && (
+          {customRelics.map(([key]) => <div key={key} className="flex items-center gap-2.5 rounded-lg border border-white/5 bg-black/40 p-2.5 text-xs text-[#ede5d8]"><span className="text-base">🗝️</span><div><span className="font-semibold text-white block">{key.slice(6).replace(/[._-]+/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())}</span><span className="text-[11px] text-stone-400">Discovered relic · may affect story choices.</span></div></div>)}
+          {protections.map(([key]) => <div key={key} className="flex items-center gap-2.5 rounded-lg border border-emerald-400/20 bg-emerald-950/20 p-2.5 text-xs text-[#ede5d8]"><span className="text-base">🛡️</span><div><span className="font-semibold text-white block">Protected: {key.slice(11).replace(/[._-]+/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())}</span><span className="text-[11px] text-stone-400">A choice recorded this protection in your chronicle.</span></div></div>)}
+
+          {!state.flags.hasSilverKey && !state.flags.acceptedSignet && !state.flags.hasPoisonVial && customRelics.length === 0 && protections.length === 0 && (
             <p className="text-xs italic text-stone-500 py-2">
               No relics discovered yet. Explore choices in the story to uncover artifacts.
             </p>

@@ -138,7 +138,7 @@ export const AccountBar: React.FC = () => {
 
   return (
     <>
-      <div className="fixed right-2 top-2 z-[60] flex items-center gap-2">
+      <div className="relative z-[60] flex w-full flex-wrap items-center justify-end gap-2 px-2 pt-2 sm:px-4">
         <SyncChip />
         {error && !conflict && (
           <div
