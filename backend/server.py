@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 40945)
-Total output lines: 2636
-
 """
 Vampire's Choice — cloud save backend (Phase 4).
 
@@ -1131,7 +1128,696 @@ def _apply_staged_preview_choice(session: Dict[str, Any], snapshot: Dict[str, An
     scene = scenes.get(scene_id)
     if scene is None or session.get("sceneId") != scene_id:
         raise HTTPException(status_code=409, detail={"error": "staged_preview_scene_conflict"})
-    choice = next((item for item in scene.get("choices", []) if isinstance(item, dict) and item.get("choiceId") …10945 tokens truncated…t": "", "stagedBy": ""}})
+    choice = next((item for item in scene.get("choices", []) if isinstance(item, dict) and item.get("choiceId") == choice_id), None)
+    if choice is None:
+        raise HTTPException(status_code=422, detail={"error": "staged_preview_choice_not_found"})
+    conditions = choice.get("conditions", []) if isinstance(choice.get("conditions"), list) else []
+    required_flags = choice.get("requiredFlags", {})
+    if not isinstance(required_flags, dict) or not all(isinstance(condition, dict) and _staged_condition_passes(session["stats"], condition) for condition in conditions) or not _staged_flags_match(session.get("flags", {}), required_flags):
+        raise HTTPException(status_code=409, detail={"error": "staged_preview_conditions_not_met"})
+    stats = dict(session["stats"])
+    audit = []
+    for kind in ("costs", "effects"):
+        for effect in choice.get(kind, []) if isinstance(choice.get(kind), list) else []:
+            if not isinstance(effect, dict) or not isinstance(effect.get("target"), str) or not isinstance(effect.get("delta"), int):
+                raise HTTPException(status_code=422, detail={"error": "staged_preview_invalid_effect"})
+            before = stats.get(effect["target"], 0)
+            after = before + effect["delta"]
+            if effect["target"] == "humanity":
+                after = max(0, min(100, after))
+            stats[effect["target"]] = after
+            audit.append({"kind": "cost" if kind == "costs" else "effect", "target": effect["target"], "before": before, "delta": effect["delta"], "after": after})
+    flags = dict(session.get("flags", {}))
+    set_flags = choice.get("setFlags", {})
+    if not isinstance(set_flags, dict) or not all(type(key) is str and type(value) is bool for key, value in set_flags.items()):
+        raise HTTPException(status_code=422, detail={"error": "staged_preview_invalid_flags"})
+    flags.update(set_flags)
+    return {"sceneId": choice.get("nextSceneId") or None, "stats": stats, "flags": flags, "event": {"sceneId": scene_id, "choiceId": choice_id, "audit": audit, "flags": set_flags, "at": _now()}}
+
+
+async def _create_release_version(draft: Dict[str, Any], user: Dict[str, Any]) -> Dict[str, Any]:
+    """Freeze one approved draft revision for the private release registry.
+
+    This is intentionally not connected to ``load_registry`` or any player
+    endpoint. A later, separately authorised integration can consume this
+    immutable snapshot after compatibility checks are defined.
+    """
+    package = _release_package(draft)
+    source = package["source"]
+    for _ in range(3):
+        latest = await admin_releases.find_one({"bookId": draft["bookId"]}, {"version": 1}, sort=[("version", -1)])
+        version = int(latest.get("version", 0)) + 1 if latest else 1
+        now = _now()
+        doc = {
+            "releaseId": f"release_{uuid.uuid4().hex}",
+            "bookId": draft["bookId"],
+            "version": version,
+            "status": "prepared",
+            "source": source,
+            "manifest": package["manifest"],
+            "snapshot": package["draft"],
+            "createdAt": now,
+            "createdBy": user["email"],
+        }
+        try:
+            await admin_releases.insert_one(doc)
+            return _public_admin_release(doc)
+        except DuplicateKeyError:
+            existing = await admin_releases.find_one({"source.draftId": source["draftId"], "source.approvedRevision": source["approvedRevision"]}, {"_id": 0})
+            if existing:
+                return _public_admin_release(existing)
+    raise HTTPException(status_code=409, detail={"error": "release_version_conflict"})
+
+
+@api.get("/admin/drafts")
+async def list_admin_drafts(request: Request):
+    user = await _current_user(request)
+    _require_admin(user)
+    docs = await admin_drafts.find({}, {"_id": 0}).sort("updatedAt", -1).to_list(length=100)
+    return {"drafts": [_public_admin_draft(doc) for doc in docs]}
+
+
+@api.get("/admin/ai/status")
+async def admin_ai_status(request: Request):
+    user = await _current_user(request)
+    _require_admin(user)
+    return {"configured": bool(OPENROUTER_API_KEY), "model": OPENROUTER_MODEL if OPENROUTER_API_KEY else None}
+
+
+@api.get("/admin/characters")
+async def list_admin_characters(request: Request):
+    user = await _current_user(request)
+    _require_admin(user)
+    characters = await admin_characters.find({}, {"_id": 0}).sort("displayName", 1).to_list(length=200)
+    return {"characters": characters}
+
+
+@api.post("/admin/characters", status_code=201)
+async def create_admin_character(request: Request, payload: AdminCharacterInput):
+    """Create private authoring metadata; never changes player content."""
+    user = await _current_user(request)
+    _require_admin(user)
+    doc = {**payload.model_dump(), "createdAt": _now(), "createdBy": user["email"]}
+    try:
+        await admin_characters.insert_one(doc)
+    except DuplicateKeyError:
+        raise HTTPException(status_code=409, detail={"error": "duplicate_character_id"})
+    return {key: value for key, value in doc.items() if key != "_id"}
+
+
+@api.put("/admin/characters/{character_id}")
+async def update_admin_character(character_id: str, request: Request, payload: AdminCharacterInput):
+    user = await _current_user(request)
+    _require_admin(user)
+    if character_id != payload.characterId:
+        raise HTTPException(status_code=400, detail={"error": "character_id_immutable"})
+    updated = await admin_characters.find_one_and_update({"characterId": character_id}, {"$set": {"displayName": payload.displayName, "defaultMood": payload.defaultMood, "updatedAt": _now(), "updatedBy": user["email"]}}, return_document=True)
+    if updated is None:
+        raise HTTPException(status_code=404, detail={"error": "character_not_found"})
+    return {key: value for key, value in updated.items() if key != "_id"}
+
+
+@api.delete("/admin/characters/{character_id}", status_code=204)
+async def delete_admin_character(character_id: str, request: Request):
+    user = await _current_user(request)
+    _require_admin(user)
+    deleted = await admin_characters.delete_one({"characterId": character_id})
+    if not deleted.deleted_count:
+        raise HTTPException(status_code=404, detail={"error": "character_not_found"})
+    return Response(status_code=204)
+
+
+@api.post("/admin/drafts", status_code=201)
+async def create_admin_draft(request: Request, payload: AdminDraftInput):
+    user = await _current_user(request)
+    _require_admin(user)
+    now = _now()
+    doc = {
+        "draftId": f"draft_{uuid.uuid4().hex}",
+        **payload.model_dump(),
+        "revision": 1,
+        "status": "draft",
+        "scenes": [],
+        "createdAt": now,
+        "updatedAt": now,
+        "updatedBy": user["email"],
+    }
+    await admin_drafts.insert_one(doc)
+    return _public_admin_draft(doc)
+
+
+@api.post("/admin/drafts/sample", status_code=201)
+async def create_sample_admin_draft(request: Request):
+    """Create a complete testing draft for an allow-listed administrator."""
+    user = await _current_user(request)
+    _require_admin(user)
+    now = _now()
+    doc = {
+        "draftId": f"draft_{uuid.uuid4().hex}",
+        "bookId": "book2",
+        "title": "Sample: The Invitation",
+        "synopsis": "A complete private sample story for testing manual scene authoring and draft playthroughs at Blackthorn Academy.",
+        "branchNotes": "This sample is safe to edit or delete. It demonstrates a complete six-scene route with linked choices and no player-facing publication.",
+        "scenes": _sample_story_scenes(),
+        "revision": 1,
+        "status": "draft",
+        "createdAt": now,
+        "updatedAt": now,
+        "updatedBy": user["email"],
+    }
+    await admin_drafts.insert_one(doc)
+    return _public_admin_draft(doc)
+
+
+@api.post("/admin/drafts/book-two-starter", status_code=201)
+async def create_book_two_starter_admin_draft(request: Request):
+    """Create a valid, private Book II production scaffold for an administrator."""
+    user = await _current_user(request)
+    _require_admin(user)
+    now = _now()
+    doc = {
+        "draftId": f"draft_{uuid.uuid4().hex}",
+        "bookId": "book2",
+        "title": "A Vampire’s Choice — Book II (working draft)",
+        "synopsis": "An editable opening scaffold for Book II: the consequences of Blackthorn Academy’s first term lead to a hidden threat beneath the school.",
+        "branchNotes": "Production starter only. Replace the placeholder route with canon prose, character dialogue, effects and meaningful branches before review. This draft never enters player content unless it completes the normal review, beta and controlled release workflow.",
+        "storyValues": {},
+        "relationshipValues": {},
+        "playtestValues": {"humanity": 100, "bloodCoins": 250},
+        "scenes": _book_two_starter_scenes(),
+        "revision": 1,
+        "status": "draft",
+        "createdAt": now,
+        "updatedAt": now,
+        "updatedBy": user["email"],
+    }
+    await admin_drafts.insert_one(doc)
+    return _public_admin_draft(doc)
+
+
+@api.post("/admin/drafts/import-book-json", status_code=201)
+async def import_admin_book_json(request: Request, payload: AdminBookJsonImport):
+    """Validate a Book JSON file, then create a private editable draft only."""
+    user = await _current_user(request)
+    _require_admin(user)
+    imported = _import_book_json(payload.content)
+    now = _now()
+    doc = {"draftId": f"draft_{uuid.uuid4().hex}", **imported, "revision": 1, "status": "draft", "importedAt": now, "importedBy": user["email"], "createdAt": now, "updatedAt": now, "updatedBy": user["email"]}
+    await admin_drafts.insert_one(doc)
+    return _public_admin_draft(doc)
+
+
+@api.post("/admin/drafts/generate", status_code=201)
+async def generate_admin_draft(request: Request, payload: AdminAiDraftRequest):
+    """Use OpenRouter to create a private, editable draft for an administrator."""
+    user = await _current_user(request)
+    _require_admin(user)
+    schema = '{"title":"string","synopsis":"string","branchNotes":"string","scenes":[{"sceneId":"id","chapterNumber":1,"title":"string","body":"string","choices":[{"choiceId":"id","text":"string","nextSceneId":"id or null","effectsNotes":"string","conditions":[{"target":"humanity|bloodCoins|affinity.<characterId>","operator":"gte|lte|eq","value":integer}],"costs":[{"target":"humanity|bloodCoins|affinity.<characterId>","delta":negative integer}],"effects":[{"target":"humanity|bloodCoins|affinity.<characterId>","delta":integer}]}]}]}'
+    affinity = {key: value for key, value in payload.initialAffinity.items() if re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,79}", key) and type(value) is int}
+    brief = f"Create a self-contained 3 to 6 scene interactive gothic fantasy romance opening for bookId '{payload.bookId}'. Premise: {payload.premise}\nDesired title: {payload.desiredTitle or 'Choose an evocative original title.'}\nPLAYER MECHANICS: starting humanity={payload.initialHumanity}/100 (never exceeds 100), starting blood coins={payload.initialBloodCoins}, character affinity values={_json.dumps(affinity)}. Use meaningful, balanced story-choice consequences that consider humanity, blood coins, and affinity. Add explicit supported numeric choice mechanics where story-appropriate: conditions:[{{target:'humanity|bloodCoins|affinity.<characterId>',operator:'gte|lte|eq',value:integer}}], costs:[{{target:'humanity|bloodCoins|affinity.<characterId>',delta:negative integer}}], effects:[{{target:'humanity|bloodCoins|affinity.<characterId>',delta:integer}}]. Prefer requiring affordability for coin costs; never reference affinity IDs not in the supplied map. If no affinity IDs are supplied, omit affinity mechanics. The values are game context and must inform both narrative and choice design.\nThis is one chapter: every scene must have chapterNumber set to 1. Scenes are branching beats within that single chapter, not separate chapters. Use only scene and choice IDs containing letters, numbers, underscores or hyphens. Every non-null nextSceneId must name a scene in the response. Include choices on most scenes and a terminal final scene. Output exactly this JSON shape: {schema}"
+    try:
+        generated = AdminGeneratedDraft.model_validate(_normalise_generated_draft(_openrouter_json(brief)))
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=502, detail={"error": "openrouter_invalid_draft"})
+    _validate_manual_scenes(generated.scenes)
+    scene_ids = {scene.sceneId for scene in generated.scenes}
+    if any(choice.nextSceneId and choice.nextSceneId not in scene_ids for scene in generated.scenes for choice in scene.choices):
+        raise HTTPException(status_code=502, detail={"error": "openrouter_invalid_links"})
+    now = _now()
+    doc = {"draftId": f"draft_{uuid.uuid4().hex}", "bookId": payload.bookId, **generated.model_dump(), "playtestValues": {"humanity": payload.initialHumanity, "bloodCoins": payload.initialBloodCoins, **{f"affinity.{key}": value for key, value in affinity.items()}}, "revision": 1, "status": "draft", "createdAt": now, "updatedAt": now, "updatedBy": user["email"]}
+    await admin_drafts.insert_one(doc)
+    return _public_admin_draft(doc)
+
+
+@api.put("/admin/drafts/{draft_id}")
+async def update_admin_draft(draft_id: str, request: Request, payload: AdminDraftUpdate):
+    user = await _current_user(request)
+    _require_admin(user)
+    if not re.fullmatch(r"draft_[0-9a-f]{32}", draft_id):
+        raise HTTPException(status_code=400, detail={"error": "invalid_draft_id"})
+    current = await admin_drafts.find_one({"draftId": draft_id}, {"_id": 0})
+    if current is None:
+        raise HTTPException(status_code=404, detail={"error": "draft_not_found"})
+    _validate_manual_scenes([AdminSceneInput.model_validate(scene) for scene in current.get("scenes", [])], payload.storyValues, payload.relationshipValues)
+    now = _now()
+    changes = payload.model_dump(exclude={"baseRevision"})
+    updated = await admin_drafts.find_one_and_update(
+        {"draftId": draft_id, "revision": payload.baseRevision, "status": {"$ne": "archived"}},
+        {"$set": {**changes, "status": "draft", "updatedAt": now, "updatedBy": user["email"]}, "$unset": {"reviewApproval": ""}, "$inc": {"revision": 1}},
+        return_document=True,
+    )
+    if updated is None:
+        return JSONResponse(status_code=409, content={"error": "revision_conflict", "currentDraft": _public_admin_draft(current)})
+    return _public_admin_draft(updated)
+
+
+@api.put("/admin/drafts/{draft_id}/scenes")
+async def update_admin_draft_scenes(draft_id: str, request: Request, payload: AdminDraftScenesUpdate):
+    """Replace a draft's manual scene list; this does not publish content."""
+    user = await _current_user(request)
+    _require_admin(user)
+    if not re.fullmatch(r"draft_[0-9a-f]{32}", draft_id):
+        raise HTTPException(status_code=400, detail={"error": "invalid_draft_id"})
+    current = await admin_drafts.find_one({"draftId": draft_id}, {"_id": 0})
+    if current is None:
+        raise HTTPException(status_code=404, detail={"error": "draft_not_found"})
+    _validate_manual_scenes(payload.scenes, current.get("storyValues"), current.get("relationshipValues"))
+    now = _now()
+    updated = await admin_drafts.find_one_and_update(
+        {"draftId": draft_id, "revision": payload.baseRevision, "status": {"$ne": "archived"}},
+        {"$set": {"scenes": [scene.model_dump() for scene in payload.scenes], "status": "draft", "updatedAt": now, "updatedBy": user["email"]}, "$unset": {"reviewApproval": ""}, "$inc": {"revision": 1}},
+        return_document=True,
+    )
+    if updated is None:
+        return JSONResponse(status_code=409, content={"error": "revision_conflict", "currentDraft": _public_admin_draft(current)})
+    return _public_admin_draft(updated)
+
+
+@api.post("/admin/drafts/{draft_id}/request-review")
+async def request_admin_draft_review(draft_id: str, request: Request):
+    """Move a finished draft into review; this never publishes game content."""
+    user = await _current_user(request)
+    _require_admin(user)
+    if not re.fullmatch(r"draft_[0-9a-f]{32}", draft_id):
+        raise HTTPException(status_code=400, detail={"error": "invalid_draft_id"})
+    now = _now()
+    updated = await admin_drafts.find_one_and_update(
+        {"draftId": draft_id, "status": "draft"},
+        {"$set": {"status": "ready_for_review", "updatedAt": now, "updatedBy": user["email"]}, "$inc": {"revision": 1}},
+        return_document=True,
+    )
+    if updated is None:
+        current = await admin_drafts.find_one({"draftId": draft_id}, {"_id": 0})
+        if current is None:
+            raise HTTPException(status_code=404, detail={"error": "draft_not_found"})
+        return _public_admin_draft(current)
+    return _public_admin_draft(updated)
+
+
+@api.post("/admin/drafts/{draft_id}/approve-release")
+async def approve_admin_draft_release_candidate(draft_id: str, request: Request):
+    """Record a human approval checkpoint; it cannot publish game content."""
+    user = await _current_user(request)
+    _require_admin(user)
+    if not re.fullmatch(r"draft_[0-9a-f]{32}", draft_id):
+        raise HTTPException(status_code=400, detail={"error": "invalid_draft_id"})
+    draft = await admin_drafts.find_one({"draftId": draft_id}, {"_id": 0})
+    if draft is None:
+        raise HTTPException(status_code=404, detail={"error": "draft_not_found"})
+    if draft.get("status") != "ready_for_review":
+        raise HTTPException(status_code=409, detail={"error": "draft_not_ready_for_approval"})
+    issues = _admin_draft_validation_issues(draft)
+    if issues:
+        raise HTTPException(status_code=422, detail={"error": "draft_not_ready_for_approval", "issues": issues})
+    now = _now()
+    approval = {"approvedAt": now, "approvedBy": user["email"], "approvedRevision": draft["revision"]}
+    approved = await admin_drafts.find_one_and_update(
+        {"draftId": draft_id, "revision": draft["revision"], "status": "ready_for_review"},
+        {"$set": {"status": "approved_for_release", "reviewApproval": approval, "updatedAt": now, "updatedBy": user["email"]}, "$push": {"reviewHistory": {"$each": [approval], "$slice": -20}}, "$inc": {"revision": 1}},
+        return_document=True,
+    )
+    if approved is None:
+        raise HTTPException(status_code=409, detail={"error": "revision_conflict"})
+    return _public_admin_draft(approved)
+
+
+@api.post("/admin/drafts/{draft_id}/archive")
+async def archive_admin_draft(draft_id: str, request: Request):
+    """Hide a draft from active work without deleting it or publishing it."""
+    user = await _current_user(request)
+    _require_admin(user)
+    if not re.fullmatch(r"draft_[0-9a-f]{32}", draft_id):
+        raise HTTPException(status_code=400, detail={"error": "invalid_draft_id"})
+    now = _now()
+    updated = await admin_drafts.find_one_and_update({"draftId": draft_id, "status": {"$ne": "archived"}}, {"$set": {"status": "archived", "archivedAt": now, "archivedBy": user["email"], "updatedAt": now, "updatedBy": user["email"]}, "$inc": {"revision": 1}}, return_document=True)
+    if updated is None:
+        current = await admin_drafts.find_one({"draftId": draft_id}, {"_id": 0})
+        if current is None:
+            raise HTTPException(status_code=404, detail={"error": "draft_not_found"})
+        return _public_admin_draft(current)
+    return _public_admin_draft(updated)
+
+
+@api.post("/admin/drafts/{draft_id}/restore")
+async def restore_admin_draft(draft_id: str, request: Request):
+    """Restore an archived draft to private editable draft status."""
+    user = await _current_user(request)
+    _require_admin(user)
+    if not re.fullmatch(r"draft_[0-9a-f]{32}", draft_id):
+        raise HTTPException(status_code=400, detail={"error": "invalid_draft_id"})
+    now = _now()
+    updated = await admin_drafts.find_one_and_update({"draftId": draft_id, "status": "archived"}, {"$set": {"status": "draft", "updatedAt": now, "updatedBy": user["email"]}, "$unset": {"archivedAt": "", "archivedBy": "", "reviewApproval": ""}, "$inc": {"revision": 1}}, return_document=True)
+    if updated is None:
+        current = await admin_drafts.find_one({"draftId": draft_id}, {"_id": 0})
+        if current is None:
+            raise HTTPException(status_code=404, detail={"error": "draft_not_found"})
+        return _public_admin_draft(current)
+    return _public_admin_draft(updated)
+
+
+@api.delete("/admin/drafts/{draft_id}", status_code=204)
+async def delete_admin_draft(draft_id: str, request: Request):
+    """Permanently remove one private draft; never touches published content."""
+    user = await _current_user(request)
+    _require_admin(user)
+    if not re.fullmatch(r"draft_[0-9a-f]{32}", draft_id):
+        raise HTTPException(status_code=400, detail={"error": "invalid_draft_id"})
+    deleted = await admin_drafts.delete_one({"draftId": draft_id})
+    if not deleted.deleted_count:
+        raise HTTPException(status_code=404, detail={"error": "draft_not_found"})
+    return Response(status_code=204)
+
+
+@api.get("/admin/drafts/{draft_id}/validation")
+async def validate_admin_draft(draft_id: str, request: Request):
+    """Return editorial readiness checks without mutating a draft or publishing it."""
+    user = await _current_user(request)
+    _require_admin(user)
+    if not re.fullmatch(r"draft_[0-9a-f]{32}", draft_id):
+        raise HTTPException(status_code=400, detail={"error": "invalid_draft_id"})
+    draft = await admin_drafts.find_one({"draftId": draft_id}, {"_id": 0})
+    if draft is None:
+        raise HTTPException(status_code=404, detail={"error": "draft_not_found"})
+    issues = _admin_draft_validation_issues(draft)
+    return {"draftId": draft_id, "valid": not issues, "issues": issues}
+
+
+@api.get("/admin/drafts/{draft_id}/review-export")
+async def export_admin_draft_for_review(draft_id: str, request: Request):
+    """Export a validated review candidate. This endpoint can never publish it."""
+    user = await _current_user(request)
+    _require_admin(user)
+    if not re.fullmatch(r"draft_[0-9a-f]{32}", draft_id):
+        raise HTTPException(status_code=400, detail={"error": "invalid_draft_id"})
+    draft = await admin_drafts.find_one({"draftId": draft_id}, {"_id": 0})
+    if draft is None:
+        raise HTTPException(status_code=404, detail={"error": "draft_not_found"})
+    if draft.get("status") not in {"ready_for_review", "approved_for_release"}:
+        raise HTTPException(status_code=409, detail={"error": "draft_not_ready_for_review"})
+    issues = _admin_draft_validation_issues(draft)
+    if issues:
+        raise HTTPException(status_code=422, detail={"error": "draft_not_ready_for_export", "issues": issues})
+    return _review_export(draft)
+
+
+@api.get("/admin/drafts/{draft_id}/publish-readiness")
+async def get_admin_draft_publish_readiness(draft_id: str, request: Request):
+    """One consolidated, read-only release view for the author workflow."""
+    user = await _current_user(request)
+    _require_admin(user)
+    draft = await admin_drafts.find_one({"draftId": draft_id}, {"_id": 0})
+    if draft is None:
+        raise HTTPException(status_code=404, detail={"error": "draft_not_found"})
+    issues = _admin_draft_validation_issues(draft)
+    approval = draft.get("reviewApproval") if draft.get("status") == "approved_for_release" else None
+    release = await admin_releases.find_one({"source.draftId": draft_id, "source.approvedRevision": approval.get("approvedRevision") if isinstance(approval, dict) else None}, {"_id": 0}) if approval else None
+    candidate = await trusted_catalogue_candidates.find_one({"releaseId": release["releaseId"]}, {"_id": 0, "playerBundleCandidate": 0, "trustedContract": 0}) if release else None
+    blockers = [{"code": item.get("code", "draft_validation"), "message": item.get("message", "Draft needs attention.")} for item in issues]
+    if not approval:
+        blockers.append({"code": "editorial_approval_required", "message": "Approve the current draft revision before preparing publication."})
+    compatibility = None
+    if release and release.get("publicationApproval"):
+        compatibility = await inspect_admin_trusted_content_compatibility(release["releaseId"], request)
+        blockers.extend({"code": item["code"], "message": item["message"]} for item in compatibility["issues"] if item["severity"] == "blocking")
+    preflight = await inspect_admin_catalogue_activation_preflight(candidate["candidateId"], request) if candidate else None
+    scene_count = len(draft.get("scenes", []))
+    choice_count = sum(len(scene.get("choices", [])) for scene in draft.get("scenes", []) if isinstance(scene, dict))
+    prepared = bool(candidate and candidate.get("status") == "registered")
+    return {
+        "format": "vampires-choice-publish-readiness/v1", "draftId": draft_id, "bookId": draft["bookId"], "title": draft["title"], "revision": draft["revision"],
+        "status": "ready_to_publish" if prepared and not blockers else "approved" if approval and not blockers else "needs_attention" if issues else "ready_for_approval",
+        "summary": {"sceneCount": scene_count, "choiceCount": choice_count, "graphPassed": not any(item["code"] in {"unknown_scene_target", "unreachable_scenes", "no_terminal_scene", "non_terminating_route"} for item in issues), "tokensPassed": not any("token" in item["code"] for item in issues), "mechanicsPassed": not any("effect" in item["code"] or "condition" in item["code"] for item in issues)},
+        "editorialApproval": approval, "release": _public_admin_release(release) if release else None, "compatibility": compatibility, "candidate": candidate, "activationPreflight": preflight,
+        "blockers": list({item["code"]: item for item in blockers}.values()), "recommendedAction": "publish_confirmation" if prepared and not blockers else "prepare_publication" if approval and not issues else "approve_for_publication" if not issues else "fix_draft",
+        "playerFacing": False, "published": False,
+    }
+
+
+@api.post("/admin/drafts/{draft_id}/mark-draft")
+async def mark_admin_draft_private(draft_id: str, request: Request):
+    """Return a review candidate to editable private draft status."""
+    user = await _current_user(request)
+    _require_admin(user)
+    now = _now()
+    updated = await admin_drafts.find_one_and_update(
+        {"draftId": draft_id, "status": {"$ne": "archived"}},
+        {"$set": {"status": "draft", "updatedAt": now, "updatedBy": user["email"]}, "$unset": {"reviewApproval": ""}, "$inc": {"revision": 1}},
+        return_document=True,
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail={"error": "draft_not_found"})
+    return _public_admin_draft(updated)
+
+
+@api.get("/admin/published-books")
+async def list_admin_published_books(request: Request):
+    """List live editions for the admin workspace, including generated reader URLs."""
+    user = await _current_user(request)
+    _require_admin(user)
+    entries = await published_catalogue.find({}, {"_id": 0, "trustedContract": 0}).sort("bookId", 1).to_list(length=100)
+    origin = str(request.base_url).rstrip("/")
+    return {"books": [{"bookId": entry["bookId"], "title": entry.get("playerBundle", {}).get("book", {}).get("title", entry["bookId"]), "releaseVersion": entry["releaseVersion"], "checksum": entry["checksum"], "publishedAt": entry["publishedAt"], "candidateId": entry["candidateId"], "readerUrl": f"{origin}/?publishedBook={entry['bookId']}"} for entry in entries]}
+
+
+@api.post("/admin/published-books/{book_id}/edit-as-draft", status_code=201)
+async def create_draft_from_published_book(book_id: str, request: Request):
+    """Start an editable draft from the exact currently published snapshot."""
+    user = await _current_user(request)
+    _require_admin(user)
+    active = await published_catalogue.find_one({"bookId": book_id}, {"_id": 0, "releaseId": 1})
+    if active is None:
+        raise HTTPException(status_code=404, detail={"error": "published_book_not_found"})
+    release = await admin_releases.find_one({"releaseId": active["releaseId"]}, {"_id": 0})
+    if release is None:
+        raise HTTPException(status_code=409, detail={"error": "published_snapshot_not_found"})
+    snapshot = release["snapshot"]
+    now = _now()
+    doc = {"draftId": f"draft_{uuid.uuid4().hex}", "bookId": snapshot["bookId"], "title": snapshot["title"], "synopsis": snapshot.get("synopsis", ""), "branchNotes": snapshot.get("branchNotes", ""), "storyValues": snapshot.get("storyValues", {}), "relationshipValues": snapshot.get("relationshipValues", {}), "playtestValues": snapshot.get("playtestValues", {"humanity": 100, "bloodCoins": 250}), "scenes": snapshot.get("scenes", []), "basedOnReleaseId": release["releaseId"], "revision": 1, "status": "draft", "createdAt": now, "updatedAt": now, "updatedBy": user["email"]}
+    await admin_drafts.insert_one(doc)
+    return _public_admin_draft(doc)
+
+
+@api.get("/admin/published-books/{book_id}/export-json")
+async def export_admin_published_book_json(book_id: str, request: Request):
+    """Export the complete immutable published authoring snapshot for review."""
+    user = await _current_user(request)
+    _require_admin(user)
+    active = await published_catalogue.find_one({"bookId": book_id}, {"_id": 0, "releaseId": 1, "releaseVersion": 1, "checksum": 1})
+    if active is None:
+        raise HTTPException(status_code=404, detail={"error": "published_book_not_found"})
+    release = await admin_releases.find_one({"releaseId": active["releaseId"]}, {"_id": 0, "snapshot": 1, "releaseId": 1, "bookId": 1, "version": 1})
+    if release is None:
+        raise HTTPException(status_code=409, detail={"error": "published_snapshot_not_found"})
+    return {"format": "vampires-choice-complete-book-json/v1", "exportedAt": _now(), "book": release["snapshot"], "release": {"releaseId": release["releaseId"], "bookId": release["bookId"], "version": release["version"], "checksum": active["checksum"]}}
+
+
+@api.post("/admin/drafts/{draft_id}/prepare-publication")
+async def prepare_admin_draft_publication(draft_id: str, request: Request):
+    """Idempotently orchestrate safe, non-player-facing release preparation.
+
+    This deliberately stops at a registered rollout candidate. The final
+    player-facing runtime activation remains a separate explicit operation.
+    """
+    user = await _current_user(request)
+    _require_admin(user)
+    draft = await admin_drafts.find_one({"draftId": draft_id}, {"_id": 0})
+    if draft is None:
+        raise HTTPException(status_code=404, detail={"error": "draft_not_found"})
+    if draft.get("status") != "approved_for_release" or not isinstance(draft.get("reviewApproval"), dict):
+        raise HTTPException(status_code=409, detail={"error": "draft_not_approved_for_release"})
+    issues = _admin_draft_validation_issues(draft)
+    if issues:
+        raise HTTPException(status_code=422, detail={"error": "draft_not_ready_for_publication", "issues": issues})
+    approved_revision = draft["reviewApproval"]["approvedRevision"]
+    release = await admin_releases.find_one({"source.draftId": draft_id, "source.approvedRevision": approved_revision}, {"_id": 0})
+    if release is None:
+        created = await _create_release_version(draft, user)
+        release = await admin_releases.find_one({"releaseId": created["releaseId"]}, {"_id": 0})
+    if release.get("status") != "staged":
+        now = _now()
+        await admin_releases.update_many({"bookId": release["bookId"], "status": "selected"}, {"$set": {"status": "prepared"}, "$unset": {"selectedAt": "", "selectedBy": ""}})
+        await admin_releases.update_one({"releaseId": release["releaseId"]}, {"$set": {"status": "selected", "selectedAt": now, "selectedBy": user["email"]}})
+        if STAGED_RELEASE_PREVIEW_ENABLED:
+            await admin_releases.update_many({"bookId": release["bookId"], "status": "staged", "releaseId": {"$ne": release["releaseId"]}}, {"$set": {"status": "prepared"}, "$unset": {"stagedAt": "", "stagedBy": ""}})
+            await admin_releases.update_one({"releaseId": release["releaseId"]}, {"$set": {"status": "staged", "stagedAt": now, "stagedBy": user["email"]}})
+    release = await admin_releases.find_one({"releaseId": release["releaseId"]}, {"_id": 0})
+    if not isinstance(release.get("publicationApproval"), dict) or release["publicationApproval"].get("checksum") != release["manifest"]["sha256"]:
+        signoff = {"checksum": release["manifest"]["sha256"], "version": release["version"], "note": "Editorial approval carried from the approved draft revision.", "approvedAt": _now(), "approvedBy": user["email"], "playerFacing": False, "published": False, "workflow": "simplified_publish"}
+        await admin_releases.update_one({"releaseId": release["releaseId"]}, {"$set": {"publicationApproval": signoff}, "$push": {"publicationApprovalHistory": {"$each": [signoff], "$slice": -20}}})
+    registration = await register_admin_catalogue_candidate(release["releaseId"], request)
+    readiness = await get_admin_draft_publish_readiness(draft_id, request)
+    return {"release": _public_admin_release(release), "candidate": registration["candidate"], "readiness": readiness, "playerFacing": False, "published": False, "note": "Preparation completed safely. No player content or player save was changed; a final live-publication activation remains explicit."}
+
+
+@api.get("/admin/releases")
+async def list_admin_release_versions(request: Request):
+    """List frozen release candidates; none are served to players."""
+    user = await _current_user(request)
+    _require_admin(user)
+    docs = await admin_releases.find({}, {"_id": 0, "snapshot": 0}).sort([("bookId", 1), ("version", -1)]).to_list(length=200)
+    return {"releases": [_public_admin_release(doc) for doc in docs], "playerFacing": False}
+
+
+@api.get("/admin/releases/{release_id}")
+async def get_admin_release_version(release_id: str, request: Request):
+    """Return one frozen snapshot for human review; never for player playback."""
+    user = await _current_user(request)
+    _require_admin(user)
+    if not re.fullmatch(r"release_[0-9a-f]{32}", release_id):
+        raise HTTPException(status_code=400, detail={"error": "invalid_release_id"})
+    release = await admin_releases.find_one({"releaseId": release_id}, {"_id": 0})
+    if release is None:
+        raise HTTPException(status_code=404, detail={"error": "release_not_found"})
+    return {**_public_admin_release(release), "snapshot": release["snapshot"], "playerFacing": False, "published": False}
+
+
+@api.get("/staged-releases/{book_id}")
+async def get_staged_release_preview(book_id: str):
+    """Read-only staging preview of one frozen version.
+
+    This is intentionally off unless ``STAGED_RELEASE_PREVIEW=true`` is set in
+    a staging/preview environment. It returns immutable content only and has
+    no save, progression, or production-publishing side effect.
+    """
+    if not STAGED_RELEASE_PREVIEW_ENABLED:
+        raise HTTPException(status_code=404, detail={"error": "staged_release_preview_disabled"})
+    if not re.fullmatch(r"book[1-9][0-9]*", book_id):
+        raise HTTPException(status_code=400, detail={"error": "invalid_book_id"})
+    release = await admin_releases.find_one({"bookId": book_id, "status": "staged"}, {"_id": 0})
+    if release is None:
+        raise HTTPException(status_code=404, detail={"error": "staged_release_not_found"})
+    return {
+        "format": "vampires-choice-staged-release/v1",
+        "environment": "staging-preview",
+        "playerFacing": True,
+        "published": False,
+        "release": _public_admin_release(release),
+        "snapshot": release["snapshot"],
+        "note": "Read-only staging preview. This endpoint does not read or write player saves.",
+    }
+
+
+@api.post("/staged-releases/{book_id}/sessions", status_code=201)
+async def create_staged_release_preview_session(book_id: str):
+    """Start an isolated, version-pinned staging progression session."""
+    if not STAGED_RELEASE_PREVIEW_ENABLED:
+        raise HTTPException(status_code=404, detail={"error": "staged_release_preview_disabled"})
+    release = await admin_releases.find_one({"bookId": book_id, "status": "staged"}, {"_id": 0})
+    if release is None:
+        raise HTTPException(status_code=404, detail={"error": "staged_release_not_found"})
+    snapshot = release["snapshot"]
+    scenes = [scene for scene in snapshot.get("scenes", []) if isinstance(scene, dict) and scene.get("sceneId")]
+    if not scenes:
+        raise HTTPException(status_code=422, detail={"error": "staged_release_has_no_scenes"})
+    opening = min(scenes, key=lambda scene: (int(scene.get("chapterNumber", 1)), scene["sceneId"]))["sceneId"]
+    now = _now()
+    token = secrets.token_urlsafe(32)
+    doc = {"sessionId": f"stage_{uuid.uuid4().hex}", "tokenHash": hashlib.sha256(token.encode()).hexdigest(), "releaseId": release["releaseId"], "bookId": book_id, "contentVersion": release["version"], "sceneId": opening, "stats": _staged_preview_stats(snapshot), "flags": {}, "history": [], "revision": 1, "createdAt": now, "updatedAt": now, "expiresAt": datetime.now(timezone.utc) + timedelta(days=7)}
+    await staged_preview_sessions.insert_one(doc)
+    return {**_public_staged_preview_session(doc), "sessionToken": token}
+
+
+@api.get("/staged-preview-sessions/{session_id}")
+async def get_staged_release_preview_session(session_id: str, request: Request):
+    token = _staged_preview_session_token(request)
+    doc = await staged_preview_sessions.find_one({"sessionId": session_id, "tokenHash": hashlib.sha256(token.encode()).hexdigest()}, {"_id": 0, "tokenHash": 0})
+    if doc is None:
+        raise HTTPException(status_code=404, detail={"error": "staged_preview_session_not_found"})
+    return _public_staged_preview_session(doc)
+
+
+@api.post("/staged-preview-sessions/{session_id}/choices")
+async def choose_staged_release_preview_session(session_id: str, request: Request, payload: StagedPreviewChoiceInput):
+    token = _staged_preview_session_token(request)
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    session = await staged_preview_sessions.find_one({"sessionId": session_id, "tokenHash": token_hash}, {"_id": 0})
+    if session is None:
+        raise HTTPException(status_code=404, detail={"error": "staged_preview_session_not_found"})
+    if session["revision"] != payload.baseRevision:
+        raise HTTPException(status_code=409, detail={"error": "staged_preview_revision_conflict", "session": _public_staged_preview_session(session)})
+    release = await admin_releases.find_one({"releaseId": session["releaseId"]}, {"_id": 0, "snapshot": 1})
+    if release is None:
+        raise HTTPException(status_code=409, detail={"error": "staged_preview_release_missing"})
+    updated = _apply_staged_preview_choice(session, release["snapshot"], payload.sceneId, payload.choiceId)
+    now = _now()
+    next_session = await staged_preview_sessions.find_one_and_update({"sessionId": session_id, "tokenHash": token_hash, "revision": payload.baseRevision}, {"$set": {"sceneId": updated["sceneId"], "stats": updated["stats"], "flags": updated["flags"], "updatedAt": now}, "$push": {"history": {"$each": [updated["event"]], "$slice": -200}}, "$inc": {"revision": 1}}, return_document=True)
+    if next_session is None:
+        raise HTTPException(status_code=409, detail={"error": "staged_preview_revision_conflict"})
+    return _public_staged_preview_session(next_session)
+
+
+@api.post("/staged-preview-sessions/{session_id}/restart")
+async def restart_staged_release_preview_session(session_id: str, request: Request):
+    token = _staged_preview_session_token(request)
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    session = await staged_preview_sessions.find_one({"sessionId": session_id, "tokenHash": token_hash}, {"_id": 0})
+    if session is None:
+        raise HTTPException(status_code=404, detail={"error": "staged_preview_session_not_found"})
+    release = await admin_releases.find_one({"releaseId": session["releaseId"]}, {"_id": 0, "snapshot": 1})
+    if release is None:
+        raise HTTPException(status_code=409, detail={"error": "staged_preview_release_missing"})
+    scenes = [scene for scene in release["snapshot"].get("scenes", []) if isinstance(scene, dict) and scene.get("sceneId")]
+    opening = min(scenes, key=lambda scene: (int(scene.get("chapterNumber", 1)), scene["sceneId"]))["sceneId"]
+    updated = await staged_preview_sessions.find_one_and_update({"sessionId": session_id, "tokenHash": token_hash}, {"$set": {"sceneId": opening, "stats": _staged_preview_stats(release["snapshot"]), "flags": {}, "history": [], "updatedAt": _now()}, "$inc": {"revision": 1}}, return_document=True)
+    return _public_staged_preview_session(updated)
+
+
+@api.post("/admin/drafts/{draft_id}/release-versions", status_code=201)
+async def create_admin_release_version(draft_id: str, request: Request):
+    """Freeze an approved draft as an immutable, private release candidate."""
+    user = await _current_user(request)
+    _require_admin(user)
+    if not re.fullmatch(r"draft_[0-9a-f]{32}", draft_id):
+        raise HTTPException(status_code=400, detail={"error": "invalid_draft_id"})
+    draft = await admin_drafts.find_one({"draftId": draft_id}, {"_id": 0})
+    if draft is None:
+        raise HTTPException(status_code=404, detail={"error": "draft_not_found"})
+    if draft.get("status") != "approved_for_release":
+        raise HTTPException(status_code=409, detail={"error": "draft_not_approved_for_release"})
+    issues = _admin_draft_validation_issues(draft)
+    if issues:
+        raise HTTPException(status_code=422, detail={"error": "draft_not_ready_for_release_version", "issues": issues})
+    return await _create_release_version(draft, user)
+
+
+@api.post("/admin/releases/{release_id}/select")
+async def select_admin_release_version(release_id: str, request: Request):
+    """Select a registry version for later rollout; never changes live content."""
+    user = await _current_user(request)
+    _require_admin(user)
+    if not re.fullmatch(r"release_[0-9a-f]{32}", release_id):
+        raise HTTPException(status_code=400, detail={"error": "invalid_release_id"})
+    release = await admin_releases.find_one({"releaseId": release_id}, {"_id": 0})
+    if release is None:
+        raise HTTPException(status_code=404, detail={"error": "release_not_found"})
+    now = _now()
+    await admin_releases.update_many({"bookId": release["bookId"], "status": "selected"}, {"$set": {"status": "prepared"}, "$unset": {"selectedAt": "", "selectedBy": ""}})
+    selected = await admin_releases.find_one_and_update(
+        {"releaseId": release_id},
+        {"$set": {"status": "selected", "selectedAt": now, "selectedBy": user["email"]}},
+        return_document=True,
+    )
+    return _public_admin_release(selected)
+
+
+@api.post("/admin/releases/{release_id}/stage")
+async def stage_admin_release_version(release_id: str, request: Request):
+    """Promote a selected immutable version to the flag-gated staging preview."""
+    user = await _current_user(request)
+    _require_admin(user)
+    if not STAGED_RELEASE_PREVIEW_ENABLED:
+        raise HTTPException(status_code=409, detail={"error": "staged_release_preview_disabled"})
+    if not re.fullmatch(r"release_[0-9a-f]{32}", release_id):
+        raise HTTPException(status_code=400, detail={"error": "invalid_release_id"})
+    release = await admin_releases.find_one({"releaseId": release_id}, {"_id": 0})
+    if release is None:
+        raise HTTPException(status_code=404, detail={"error": "release_not_found"})
+    if release.get("status") not in {"selected", "staged"}:
+        raise HTTPException(status_code=409, detail={"error": "release_not_selected"})
+    now = _now()
+    await admin_releases.update_many({"bookId": release["bookId"], "status": "staged"}, {"$set": {"status": "prepared"}, "$unset": {"stagedAt": "", "stagedBy": ""}})
     staged = await admin_releases.find_one_and_update(
         {"releaseId": release_id},
         {"$set": {"status": "staged", "stagedAt": now, "stagedBy": user["email"]}},
